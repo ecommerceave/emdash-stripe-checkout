@@ -1,0 +1,20 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "emdash-stripe-checkout",
+	"publisher": "did:plc:wlshattmcjplayfxlgzbhxvk", // ecommerceave.com
+
+	"license": "MIT",
+	"author": { "name": "Brandon Livengood" },
+	"security": { "email": "support@ecommerceave.com" },
+	"repo": "https://github.com/ecommerceave/emdash-stripe-checkout",
+
+	// Trust contract — what runtime APIs the plugin asks for.
+	// Empty arrays mean no extra privileges beyond logging,
+	// KV, and route/hook registration. Changing these between
+	// releases requires a version bump because installed
+	// users have consented to the old contract.
+	"capabilities": [],
+	"allowedHosts": [],
+	"storage": {}
+}
