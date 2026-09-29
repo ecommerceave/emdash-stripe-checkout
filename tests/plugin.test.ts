@@ -1,18 +1,110 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createPluginTestHost, type PluginTestHost } from "@emdash-cms/plugin-test";
+import {
+	createPluginRuntimeTestHost,
+	type PluginRuntimeTestHost,
+} from "@emdash-cms/plugin-test";
 
-let host: PluginTestHost | undefined;
+const STRIPE_URL = "https://api.stripe.com/v1/checkout/sessions";
+
+let host: PluginRuntimeTestHost | undefined;
 
 afterEach(async () => {
 	await host?.dispose();
 	host = undefined;
 });
 
-describe("hello route", () => {
-	it("returns a greeting through the sandbox host", async () => {
-		host = await createPluginTestHost();
-		const result = await host.invokeRoute("hello");
-		expect(result).toEqual({ greeting: "hello", pluginId: "emdash-stripe-checkout" });
+describe("createCheckoutSession route", () => {
+	it("creates a Stripe Checkout session", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		await host.http.respond(
+			STRIPE_URL,
+			new Response(
+				JSON.stringify({
+					id: "cs_test_123",
+					url: "https://checkout.stripe.com/c/pay/cs_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("createCheckoutSession", {
+			priceId: "price_test_123",
+			successUrl: "https://example.com/success",
+			cancelUrl: "https://example.com/cancel",
+		});
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId: "cs_test_123",
+			checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.url).toBe(STRIPE_URL);
+		expect(requests[0]?.method).toBe("POST");
+		
+		const body = new TextDecoder().decode(requests[0]?.body);
+
+		expect(body).toContain(
+			"line_items%5B0%5D%5Bprice%5D=price_test_123",
+		);
+	});
+
+	it("rejects an invalid checkout request", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute("createCheckoutSession", {
+			priceId: "",
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Invalid checkout request.",
+		});
+	});
+
+	it("handles a Stripe API error", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		await host.http.respond(
+			STRIPE_URL,
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "No such price: 'price_bad'",
+					},
+				}),
+				{
+					status: 400,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("createCheckoutSession", {
+			priceId: "price_bad",
+			successUrl: "https://example.com/success",
+			cancelUrl: "https://example.com/cancel",
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: "No such price: 'price_bad'",
+		});
 	});
 });

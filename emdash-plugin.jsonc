@@ -14,7 +14,23 @@
 	// KV, and route/hook registration. Changing these between
 	// releases requires a version bump because installed
 	// users have consented to the old contract.
-	"capabilities": [],
-	"allowedHosts": [],
-	"storage": {}
+	"capabilities": [
+		"network:request"
+	],
+
+	"allowedHosts": [
+		"api.stripe.com"
+	],
+
+	"storage": {},
+
+	"admin": {
+		"settingsSchema": {
+			"stripeSecretKey": {
+				"label": "Stripe Secret Key",
+				"description": "Your Stripe secret API key. Use a test-mode key while setting up and testing the plugin.",
+				"type": "secret"
+			}
+		}
+	}
 }
