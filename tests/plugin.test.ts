@@ -20,6 +20,13 @@ describe("createCheckoutSession route", () => {
 
 		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
 
+		await host.fixtures.plugin.kv("state:product:product_test_123", {
+			stripeProductId: "prod_test_123",
+			stripePriceId: "price_test_123",
+			price: 25,
+			currency: "usd",
+		});
+
 		await host.http.respond(
 			STRIPE_URL,
 			new Response(
@@ -37,7 +44,7 @@ describe("createCheckoutSession route", () => {
 		);
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
-			priceId: "price_test_123",
+			productId: "product_test_123",
 			successUrl: "https://example.com/success",
 			cancelUrl: "https://example.com/cancel",
 		});
@@ -79,6 +86,13 @@ describe("createCheckoutSession route", () => {
 
 		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
 
+		await host.fixtures.plugin.kv("state:product:product_bad", {
+			stripeProductId: "prod_test_bad",
+			stripePriceId: "price_bad",
+			price: 25,
+			currency: "usd",
+		});
+
 		await host.http.respond(
 			STRIPE_URL,
 			new Response(
@@ -97,7 +111,7 @@ describe("createCheckoutSession route", () => {
 		);
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
-			priceId: "price_bad",
+			productId: "product_bad",
 			successUrl: "https://example.com/success",
 			cancelUrl: "https://example.com/cancel",
 		});

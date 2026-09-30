@@ -1,7 +1,7 @@
 import { pluginRoute, type SandboxedPlugin } from "emdash/plugin";
 
 type CheckoutInput = {
-	priceId: string;
+	productId: string;
 	successUrl: string;
 	cancelUrl: string;
 };
@@ -42,8 +42,8 @@ function isCheckoutInput(input: unknown): input is CheckoutInput {
 	const data = input as Record<string, unknown>;
 
 	return (
-		typeof data.priceId === "string" &&
-		data.priceId.startsWith("price_") &&
+		typeof data.productId === "string" &&
+		data.productId.trim().length > 0 &&
 		isHttpUrl(data.successUrl) &&
 		isHttpUrl(data.cancelUrl)
 	);
@@ -62,11 +62,6 @@ const plugin: SandboxedPlugin = {
 			const stateKey = `state:product:${contentId}`;
 			const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
 
-			console.log("[PLUGIN DEBUG] Stripe state", {
-				stateKey,
-				stripeState,
-			});
-
 			const name = typeof product.name === "string" ? product.name.trim() : "";
 			const description =
 				typeof product.description === "string"
@@ -79,6 +74,29 @@ const plugin: SandboxedPlugin = {
 					? product.currency.trim().toLowerCase()
 					: "usd";
 			const active = product.active === true || product.active === 1;
+
+			let imageUrl = "";
+
+			if (
+				typeof product.image === "object" &&
+				product.image !== null &&
+				"id" in product.image &&
+				typeof product.image.id === "string"
+			) {
+				const media = await ctx.media?.get(product.image.id);
+
+				if (media?.url) {
+					const siteUrl = new URL(ctx.site.url);
+					const isLocal =
+						siteUrl.hostname === "localhost" ||
+						siteUrl.hostname === "127.0.0.1";
+
+					if (!isLocal) {
+						imageUrl = new URL(media.url, siteUrl).toString();
+					}
+				}
+
+			}
 
 			if (!name || !Number.isFinite(price) || price < 0 || !currency) {
 				console.error("[PLUGIN] Product cannot be synced to Stripe", {
@@ -117,6 +135,10 @@ const plugin: SandboxedPlugin = {
 
 				if (description) {
 					stripeProductBody.set("description", description);
+				}
+
+				if (imageUrl) {
+					stripeProductBody.set("images[0]", imageUrl);
 				}
 
 				if (sku) {
@@ -168,6 +190,9 @@ const plugin: SandboxedPlugin = {
 				stripeProductBody.set("description", description);
 				stripeProductBody.set("metadata[emdash_content_id]", contentId);
 				stripeProductBody.set("metadata[sku]", sku);
+				if (imageUrl) {
+					stripeProductBody.set("images[0]", imageUrl);
+				}
 
 				const stripeProductResponse = await ctx.http.fetch(
 					`https://api.stripe.com/v1/products/${stripeState.stripeProductId}`,
@@ -289,15 +314,6 @@ const plugin: SandboxedPlugin = {
 				});
 			}
 
-			console.log("[PLUGIN DEBUG] Published product ready for Stripe", {
-				id: contentId,
-				name: product.name,
-				description: product.description,
-				price: product.price,
-				sku: product.sku,
-				active: product.active,
-				currency: product.currency,
-			});
         },
     },
 
@@ -325,7 +341,20 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
-				const { priceId, successUrl, cancelUrl } = routeCtx.input;
+				const { productId, successUrl, cancelUrl } = routeCtx.input;
+
+				const stripeState = await ctx.kv.get<StripeProductState>(
+					`state:product:${productId}`,
+				);
+
+				if (!stripeState?.stripePriceId) {
+					return {
+						ok: false,
+						error: "This product is not available for Stripe Checkout.",
+					};
+				}
+
+				const priceId = stripeState.stripePriceId;
 
 				const body = new URLSearchParams();
 

@@ -16,7 +16,8 @@
 	// users have consented to the old contract.
 	"capabilities": [
 		"network:request",
-		"content:write"
+		"content:write",
+		"media:read"
 	],
 
 	"allowedHosts": [
