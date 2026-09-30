@@ -15,7 +15,8 @@
 	// releases requires a version bump because installed
 	// users have consented to the old contract.
 	"capabilities": [
-		"network:request"
+		"network:request",
+		"content:write"
 	],
 
 	"allowedHosts": [
