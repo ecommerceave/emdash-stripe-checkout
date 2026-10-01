@@ -45,8 +45,6 @@ describe("createCheckoutSession route", () => {
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
 			productId: "product_test_123",
-			successUrl: "https://example.com/success",
-			cancelUrl: "https://example.com/cancel",
 		});
 
 		expect(result).toEqual({
@@ -66,13 +64,17 @@ describe("createCheckoutSession route", () => {
 		expect(body).toContain(
 			"line_items%5B0%5D%5Bprice%5D=price_test_123",
 		);
+
+		expect(body).toContain("success_url=");
+		expect(body).toContain("cancel_url=");
+
 	});
 
 	it("rejects an invalid checkout request", async () => {
 		host = await createPluginRuntimeTestHost();
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
-			priceId: "",
+			productId: "",
 		});
 
 		expect(result).toEqual({
@@ -112,8 +114,6 @@ describe("createCheckoutSession route", () => {
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
 			productId: "product_bad",
-			successUrl: "https://example.com/success",
-			cancelUrl: "https://example.com/cancel",
 		});
 
 		expect(result).toEqual({

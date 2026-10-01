@@ -2,8 +2,6 @@ import { pluginRoute, type SandboxedPlugin } from "emdash/plugin";
 
 type CheckoutInput = {
 	productId: string;
-	successUrl: string;
-	cancelUrl: string;
 };
 
 type StripeCheckoutSession = {
@@ -21,18 +19,6 @@ type StripeProductState = {
     currency?: string;
 };
 
-function isHttpUrl(value: unknown): value is string {
-	if (typeof value !== "string") {
-		return false;
-	}
-
-	try {
-		const url = new URL(value);
-		return url.protocol === "https:" || url.protocol === "http:";
-	} catch {
-		return false;
-	}
-}
 
 function isCheckoutInput(input: unknown): input is CheckoutInput {
 	if (typeof input !== "object" || input === null) {
@@ -43,9 +29,7 @@ function isCheckoutInput(input: unknown): input is CheckoutInput {
 
 	return (
 		typeof data.productId === "string" &&
-		data.productId.trim().length > 0 &&
-		isHttpUrl(data.successUrl) &&
-		isHttpUrl(data.cancelUrl)
+		data.productId.trim().length > 0
 	);
 }
 
@@ -319,6 +303,7 @@ const plugin: SandboxedPlugin = {
 
     routes: {
 		createCheckoutSession: pluginRoute({
+			public: true,
 			methods: ["POST"],
 			request: {
 				body: "json",
@@ -341,7 +326,11 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
-				const { productId, successUrl, cancelUrl } = routeCtx.input;
+				const { productId } = routeCtx.input;
+
+				const siteUrl = new URL(ctx.site.url);
+				const successUrl = new URL("/?checkout=success", siteUrl).toString();
+				const cancelUrl = new URL("/?checkout=cancel", siteUrl).toString();
 
 				const stripeState = await ctx.kv.get<StripeProductState>(
 					`state:product:${productId}`,
