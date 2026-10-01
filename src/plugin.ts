@@ -2,6 +2,7 @@ import { pluginRoute, type SandboxedPlugin } from "emdash/plugin";
 
 type CheckoutInput = {
 	productId: string;
+	returnPath?: string;
 };
 
 type StripeCheckoutSession = {
@@ -27,9 +28,16 @@ function isCheckoutInput(input: unknown): input is CheckoutInput {
 
 	const data = input as Record<string, unknown>;
 
+	const returnPathIsValid =
+	data.returnPath === undefined ||
+	(typeof data.returnPath === "string" &&
+		data.returnPath.startsWith("/") &&
+		!data.returnPath.startsWith("//"));
+
 	return (
 		typeof data.productId === "string" &&
-		data.productId.trim().length > 0
+		data.productId.trim().length > 0 &&
+		returnPathIsValid
 	);
 }
 
@@ -326,11 +334,23 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
-				const { productId } = routeCtx.input;
+				const { productId, returnPath = "/" } = routeCtx.input;
 
 				const siteUrl = new URL(ctx.site.url);
-				const successUrl = new URL("/?checkout=success", siteUrl).toString();
-				const cancelUrl = new URL("/?checkout=cancel", siteUrl).toString();
+				const returnUrl = new URL(returnPath, siteUrl);
+
+				if (returnUrl.origin !== siteUrl.origin) {
+					return {
+						ok: false,
+						error: "Invalid return path.",
+					};
+				}
+
+				returnUrl.searchParams.set("checkout", "success");
+				const successUrl = returnUrl.toString();
+
+				returnUrl.searchParams.set("checkout", "cancel");
+				const cancelUrl = returnUrl.toString();
 
 				const stripeState = await ctx.kv.get<StripeProductState>(
 					`state:product:${productId}`,

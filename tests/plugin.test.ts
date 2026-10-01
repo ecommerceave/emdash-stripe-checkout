@@ -45,6 +45,7 @@ describe("createCheckoutSession route", () => {
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
 			productId: "product_test_123",
+			returnPath: "/product-test",
 		});
 
 		expect(result).toEqual({
@@ -65,8 +66,12 @@ describe("createCheckoutSession route", () => {
 			"line_items%5B0%5D%5Bprice%5D=price_test_123",
 		);
 
-		expect(body).toContain("success_url=");
-		expect(body).toContain("cancel_url=");
+		expect(body).toContain(
+			"success_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dsuccess",
+		);
+		expect(body).toContain(
+			"cancel_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dcancel",
+		);
 
 	});
 
@@ -75,6 +80,20 @@ describe("createCheckoutSession route", () => {
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
 			productId: "",
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Invalid checkout request.",
+		});
+	});
+
+	it("rejects an external return path", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute("createCheckoutSession", {
+			productId: "product_test_123",
+			returnPath: "//evil.example",
 		});
 
 		expect(result).toEqual({
