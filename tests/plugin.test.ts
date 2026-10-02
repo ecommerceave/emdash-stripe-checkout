@@ -67,7 +67,7 @@ describe("createCheckoutSession route", () => {
 		);
 
 		expect(body).toContain(
-			"success_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dsuccess",
+			"success_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dsuccess%26session_id%3D%7BCHECKOUT_SESSION_ID%7D",
 		);
 		expect(body).toContain(
 			"cancel_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dcancel",
@@ -140,4 +140,43 @@ describe("createCheckoutSession route", () => {
 			error: "No such price: 'price_bad'",
 		});
 	});
+
+	it("verifies a paid Stripe Checkout session", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_paid123";
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+				JSON.stringify({
+					id: sessionId,
+					payment_status: "paid",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+				sessionId,
+			},
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId,
+			paid: true,
+			paymentStatus: "paid",
+		});
+	});
+
 });

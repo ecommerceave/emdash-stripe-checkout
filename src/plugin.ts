@@ -5,9 +5,14 @@ type CheckoutInput = {
 	returnPath?: string;
 };
 
+type VerifyCheckoutInput = {
+  sessionId: string;
+};
+
 type StripeCheckoutSession = {
 	id?: string;
 	url?: string;
+	payment_status?: string;
 	error?: {
 		message?: string;
 	};
@@ -19,7 +24,6 @@ type StripeProductState = {
     price?: number;
     currency?: string;
 };
-
 
 function isCheckoutInput(input: unknown): input is CheckoutInput {
 	if (typeof input !== "object" || input === null) {
@@ -38,6 +42,20 @@ function isCheckoutInput(input: unknown): input is CheckoutInput {
 		typeof data.productId === "string" &&
 		data.productId.trim().length > 0 &&
 		returnPathIsValid
+	);
+}
+
+function isVerifyCheckoutInput(value: unknown): value is VerifyCheckoutInput {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+
+	const data = value as Record<string, unknown>;
+
+	return (
+		typeof data.sessionId === "string" &&
+		data.sessionId.startsWith("cs_") &&
+		data.sessionId.trim().length > 3
 	);
 }
 
@@ -347,7 +365,8 @@ const plugin: SandboxedPlugin = {
 				}
 
 				returnUrl.searchParams.set("checkout", "success");
-				const successUrl = returnUrl.toString();
+				const successUrl =
+					`${returnUrl.toString()}&session_id={CHECKOUT_SESSION_ID}`;
 
 				returnUrl.searchParams.set("checkout", "cancel");
 				const cancelUrl = returnUrl.toString();
@@ -425,6 +444,73 @@ const plugin: SandboxedPlugin = {
 					ok: true,
 					sessionId: stripeResponse.id,
 					checkoutUrl: stripeResponse.url,
+				};
+			},
+		}),
+		verifyCheckoutSession: pluginRoute({
+			public: true,
+			methods: ["POST"],
+			request: {
+				body: "json",
+			},
+			handler: async (routeCtx, ctx) => {
+				if (!isVerifyCheckoutInput(routeCtx.input)) {
+					return {
+						ok: false,
+						error: "Invalid Checkout Session.",
+					};
+				}
+
+				const stripeSecretKey =
+					await ctx.settings.get<string>("stripeSecretKey");
+
+				if (!stripeSecretKey) {
+					return {
+						ok: false,
+						error: "Stripe Secret Key has not been configured.",
+					};
+				}
+
+				if (!ctx.http) {
+					return {
+						ok: false,
+						error: "Network access is not available.",
+					};
+				}
+
+				const { sessionId } = routeCtx.input;
+
+				const response = await ctx.http.fetch(
+					`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+					{
+						method: "GET",
+						headers: {
+							Authorization: `Bearer ${stripeSecretKey}`,
+						},
+					},
+				);
+
+				const stripeResponse =
+					(await response.json()) as StripeCheckoutSession;
+
+				if (!response.ok) {
+					ctx.log.error("Stripe Checkout session verification failed", {
+						status: response.status,
+						sessionId,
+						message: stripeResponse.error?.message,
+					});
+
+					return {
+						ok: false,
+						error: "Checkout Session could not be verified.",
+					};
+				}
+
+				return {
+					ok: true,
+					sessionId: stripeResponse.id,
+					paid: stripeResponse.payment_status === "paid",
+					paymentStatus: stripeResponse.payment_status,
 				};
 			},
 		}),
