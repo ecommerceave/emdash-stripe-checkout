@@ -315,3 +315,82 @@ describe("createCheckoutSession route", () => {
 	});
 
 });
+
+describe("product sync", () => {
+	it("creates a Stripe Product when a product is published", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products",
+			new Response(
+				JSON.stringify({
+					id: "prod_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices",
+			new Response(
+				JSON.stringify({
+					id: "price_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Test T-Shirt",
+					description: "A test product",
+					price: 25,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: true,
+				},
+			},
+		});
+
+		const requests = host.http.requests();
+
+		const productRequest = requests.find(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/products",
+		);
+
+		expect(productRequest).toBeDefined();
+		expect(productRequest?.headers["idempotency-key"]).toBe(
+			"emdash-product-product_test_123",
+		);
+
+		const priceRequest = requests.find(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(priceRequest).toBeDefined();
+		expect(priceRequest?.headers["idempotency-key"]).toBe(
+			"emdash-price-product_test_123-usd-2500",
+		);
+
+	});
+});

@@ -166,6 +166,7 @@ const plugin: SandboxedPlugin = {
 						headers: {
 							Authorization: `Bearer ${stripeSecretKey}`,
 							"Content-Type": "application/x-www-form-urlencoded",
+							"Idempotency-Key": `emdash-product-${contentId}`,
 						},
 						body: stripeProductBody.toString(),
 					},
@@ -264,6 +265,8 @@ const plugin: SandboxedPlugin = {
 						headers: {
 							Authorization: `Bearer ${stripeSecretKey}`,
 							"Content-Type": "application/x-www-form-urlencoded",
+							"Idempotency-Key":
+							`emdash-price-${contentId}-${currency}-${unitAmount}`,
 						},
 						body: stripePriceBody.toString(),
 					},
