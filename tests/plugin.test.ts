@@ -219,4 +219,99 @@ describe("createCheckoutSession route", () => {
 		});
 	});
 
+	it("does not verify an unpaid Stripe Checkout session as paid", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_unpaid123";
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+				JSON.stringify({
+					id: sessionId,
+					payment_status: "unpaid",
+					client_reference_id: "product_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+				sessionId,
+				productId: "product_test_123",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId,
+			paid: false,
+			paymentStatus: "unpaid",
+		});
+	});
+
+	it("rejects verification when the Stripe Secret Key is missing", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+				sessionId: "cs_test_missing_key",
+				productId: "product_test_123",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Stripe Secret Key has not been configured.",
+		});
+	});
+
+	it("handles a Stripe API error during Checkout verification", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_invalid123";
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "No such checkout.session",
+					},
+				}),
+				{
+					status: 404,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+				sessionId,
+				productId: "product_test_123",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Checkout Session could not be verified.",
+		});
+	});
+
 });
