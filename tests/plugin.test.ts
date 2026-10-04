@@ -394,6 +394,7 @@ describe("product sync", () => {
 
 	});
 
+
 	it("creates a new Stripe Price when the product price changes", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -506,6 +507,74 @@ describe("product sync", () => {
 		);
 
 		expect(oldPriceBody).toContain("active=false");
+
+	});
+
+	it("does not create a new Stripe Price when the price is unchanged", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv(
+			"state:product:product_test_123",
+			{
+				stripeProductId: "prod_test_123",
+				stripePriceId: "price_existing_123",
+				price: 25,
+				currency: "usd",
+			},
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(
+				JSON.stringify({
+					id: "prod_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Updated Test T-Shirt",
+					description: "Updated product description",
+					price: 25,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: true,
+				},
+			},
+		});
+
+		const requests = host.http.requests();
+
+		const productUpdateRequest = requests.find(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/products/prod_test_123",
+		);
+
+		expect(productUpdateRequest).toBeDefined();
+		expect(productUpdateRequest?.method).toBe("POST");
+
+		const priceCreateRequest = requests.find(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(priceCreateRequest).toBeUndefined();
 
 	});
 
