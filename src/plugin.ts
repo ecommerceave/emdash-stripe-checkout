@@ -7,12 +7,14 @@ type CheckoutInput = {
 
 type VerifyCheckoutInput = {
   sessionId: string;
+  productId: string;
 };
 
 type StripeCheckoutSession = {
 	id?: string;
 	url?: string;
 	payment_status?: string;
+	client_reference_id?: string;
 	error?: {
 		message?: string;
 	};
@@ -55,7 +57,9 @@ function isVerifyCheckoutInput(value: unknown): value is VerifyCheckoutInput {
 	return (
 		typeof data.sessionId === "string" &&
 		data.sessionId.startsWith("cs_") &&
-		data.sessionId.trim().length > 3
+		data.sessionId.trim().length > 3 &&
+		typeof data.productId === "string" &&
+		data.productId.trim().length > 0
 	);
 }
 
@@ -387,6 +391,7 @@ const plugin: SandboxedPlugin = {
 				const body = new URLSearchParams();
 
 				body.set("mode", "payment");
+				body.set("client_reference_id", productId);
 				body.set("line_items[0][price]", priceId);
 				body.set("line_items[0][quantity]", "1");
 				body.set("success_url", successUrl);
@@ -478,7 +483,7 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
-				const { sessionId } = routeCtx.input;
+				const { sessionId, productId } = routeCtx.input;
 
 				const response = await ctx.http.fetch(
 					`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
@@ -506,6 +511,18 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
+				if (stripeResponse.client_reference_id !== productId) {
+					ctx.log.warn("Stripe Checkout session product mismatch", {
+						sessionId,
+						expectedProductId: productId,
+					});
+
+					return {
+						ok: false,
+						error: "Checkout Session does not match this product.",
+					};
+				}
+				
 				return {
 					ok: true,
 					sessionId: stripeResponse.id,

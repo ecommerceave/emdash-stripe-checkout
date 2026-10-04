@@ -154,6 +154,7 @@ describe("createCheckoutSession route", () => {
 				JSON.stringify({
 					id: sessionId,
 					payment_status: "paid",
+					client_reference_id: "product_test_123",
 				}),
 				{
 					status: 200,
@@ -168,6 +169,7 @@ describe("createCheckoutSession route", () => {
 			"verifyCheckoutSession",
 			{
 				sessionId,
+				productId: "product_test_123",
 			},
 		);
 
@@ -176,6 +178,44 @@ describe("createCheckoutSession route", () => {
 			sessionId,
 			paid: true,
 			paymentStatus: "paid",
+		});
+	});
+
+	it("rejects a Checkout session for a different product", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_wrong_product";
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+				JSON.stringify({
+					id: sessionId,
+					payment_status: "paid",
+					client_reference_id: "product_a",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+				sessionId,
+				productId: "product_b",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Checkout Session does not match this product.",
 		});
 	});
 
