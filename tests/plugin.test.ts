@@ -662,3 +662,55 @@ describe("product sync", () => {
 	});
 
 });
+
+describe("checkProductSchema route", () => {
+	it("checks the Products collection schema", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute(
+			"checkProductSchema",
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			collectionExists: false,
+			fields: [
+				{ slug: "name", expectedType: "string", exists: false, valid: false },
+				{ slug: "description", expectedType: "text", exists: false, valid: false },
+				{ slug: "image", expectedType: "image", exists: false, valid: false },
+				{ slug: "price", expectedType: "number", exists: false, valid: false },
+				{ slug: "currency", expectedType: "select", exists: false, valid: false },
+				{ slug: "sku", expectedType: "string", exists: false, valid: false },
+				{ slug: "active", expectedType: "boolean", exists: false, valid: false },
+			],
+		});
+	});
+
+	it("accepts a valid Products collection schema", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Product Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "text" },
+				{ slug: "image", label: "Product Image", type: "image" },
+				{ slug: "price", label: "Price", type: "number", required: true },
+				{ slug: "currency", label: "Currency", type: "select", required: true },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		const result = await host.transport.invokeRoute(
+			"checkProductSchema",
+		);
+
+		expect(result).toMatchObject({
+			ok: true,
+			collectionExists: true,
+		});
+	});
+
+});

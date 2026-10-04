@@ -17,7 +17,8 @@
 	"capabilities": [
 		"network:request",
 		"content:write",
-		"media:read"
+		"media:read",
+		"schema:read"
 	],
 
 	"allowedHosts": [

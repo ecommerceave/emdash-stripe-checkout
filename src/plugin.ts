@@ -1,4 +1,8 @@
-import { pluginRoute, type SandboxedPlugin } from "emdash/plugin";
+import {
+	pluginRoute,
+	type PluginContext,
+	type SandboxedPlugin,
+} from "emdash/plugin";
 
 type CheckoutInput = {
 	productId: string;
@@ -26,6 +30,70 @@ type StripeProductState = {
     price?: number;
     currency?: string;
 };
+
+const REQUIRED_PRODUCT_FIELDS = [
+	{ slug: "name", type: "string", required: true },
+	{ slug: "description", type: "text", required: false },
+	{ slug: "image", type: "image", required: false },
+	{ slug: "price", type: "number", required: true },
+	{ slug: "currency", type: "select", required: true },
+	{ slug: "sku", type: "string", required: false },
+	{ slug: "active", type: "boolean", required: false },
+] as const;
+
+type ProductSchemaCheck = {
+	ok: boolean;
+	collectionExists: boolean;
+	fields: Array<{
+		slug: string;
+		expectedType: string;
+		actualType?: string;
+		exists: boolean;
+		valid: boolean;
+	}>;
+};
+
+async function checkProductSchema(
+	ctx: PluginContext,
+): Promise<ProductSchemaCheck> {
+	const collection = await ctx.schema?.getCollection("products");
+
+	if (!collection) {
+		return {
+			ok: false,
+			collectionExists: false,
+			fields: REQUIRED_PRODUCT_FIELDS.map((field) => ({
+				slug: field.slug,
+				expectedType: field.type,
+				exists: false,
+				valid: false,
+			})),
+		};
+	}
+
+	const fields = REQUIRED_PRODUCT_FIELDS.map((requiredField) => {
+		const actualField = collection.fields.find(
+			(field) => field.slug === requiredField.slug,
+		);
+
+		return {
+			slug: requiredField.slug,
+			expectedType: requiredField.type,
+			actualType: actualField?.type,
+			exists: Boolean(actualField),
+			valid:
+				Boolean(actualField) &&
+				actualField?.type === requiredField.type &&
+				(!requiredField.required || actualField.required),
+		};
+	});
+
+	return {
+		ok: fields.every((field) => field.valid),
+		collectionExists: true,
+		fields,
+	};
+}
 
 function isCheckoutInput(input: unknown): input is CheckoutInput {
 	if (typeof input !== "object" || input === null) {
@@ -335,6 +403,16 @@ const plugin: SandboxedPlugin = {
     },
 
     routes: {
+		checkProductSchema: pluginRoute({
+			methods: ["GET"],
+			request: {
+				body: "none",
+			},
+			handler: async (_routeCtx, ctx) => {
+				return await checkProductSchema(ctx);
+			},
+		}),
+		
 		createCheckoutSession: pluginRoute({
 			public: true,
 			methods: ["POST"],
