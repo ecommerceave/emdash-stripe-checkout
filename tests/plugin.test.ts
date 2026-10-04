@@ -394,7 +394,6 @@ describe("product sync", () => {
 
 	});
 
-
 	it("creates a new Stripe Price when the product price changes", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -575,6 +574,90 @@ describe("product sync", () => {
 		);
 
 		expect(priceCreateRequest).toBeUndefined();
+
+	});
+
+	it("keeps the old Stripe Price active when creating a new Price fails", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv(
+			"state:product:product_test_123",
+			{
+				stripeProductId: "prod_test_123",
+				stripePriceId: "price_old_123",
+				price: 25,
+				currency: "usd",
+			},
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(
+				JSON.stringify({
+					id: "prod_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices",
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "Unable to create Stripe Price",
+					},
+				}),
+				{
+					status: 400,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Test T-Shirt",
+					description: "A test product",
+					price: 30,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: true,
+				},
+			},
+		});
+
+		const requests = host.http.requests();
+
+		const newPriceRequest = requests.find(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(newPriceRequest).toBeDefined();
+
+		const deactivateOldPriceRequest = requests.find(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/prices/price_old_123",
+		);
+
+		expect(deactivateOldPriceRequest).toBeUndefined();
 
 	});
 
