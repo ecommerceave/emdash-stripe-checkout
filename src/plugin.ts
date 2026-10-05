@@ -1,8 +1,14 @@
 import {
-	pluginRoute,
-	type PluginContext,
-	type SandboxedPlugin,
+        pluginRoute,
+        type PluginContext,
+        type SandboxedPlugin,
 } from "emdash/plugin";
+
+import {
+        blocks,
+        elements,
+        type BlockResponse,
+} from "@emdash-cms/blocks/server";
 
 type CheckoutInput = {
 	productId: string;
@@ -92,6 +98,37 @@ async function checkProductSchema(
 		ok: fields.every((field) => field.valid),
 		collectionExists: true,
 		fields,
+	};
+}
+
+async function buildAdminPage(
+    ctx: PluginContext,
+): Promise<BlockResponse> {
+    const schema = await checkProductSchema(ctx);
+    const stripeSecretKey =
+        await ctx.settings.get<string>("stripeSecretKey");
+
+	return {
+		blocks: [
+			blocks.header("Stripe Checkout"),
+			blocks.section(
+				"Lightweight Stripe Checkout integration for EmDash.",
+			),
+			blocks.fields([
+				{
+					label: "Stripe Configuration",
+					value: stripeSecretKey ? "Configured" : "Needs setup",
+				},
+				{
+					label: "Products Collection",
+					value: schema.collectionExists ? "Found" : "Missing",
+				},
+				{
+					label: "Product Schema",
+					value: schema.ok ? "Valid" : "Needs attention",
+				},
+			]),
+		],
 	};
 }
 
@@ -403,6 +440,16 @@ const plugin: SandboxedPlugin = {
     },
 
     routes: {
+		admin: pluginRoute({
+			methods: ["POST"],
+			request: {
+				body: "json",
+			},
+			handler: async (_routeCtx, ctx) => {
+				return await buildAdminPage(ctx);
+			},
+		}),
+		
 		checkProductSchema: pluginRoute({
 			methods: ["GET"],
 			request: {

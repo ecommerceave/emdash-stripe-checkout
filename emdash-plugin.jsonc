@@ -28,12 +28,18 @@
 	"storage": {},
 
 	"admin": {
-		"settingsSchema": {
+        "settingsSchema": {
 			"stripeSecretKey": {
 				"label": "Stripe Secret Key",
 				"description": "Your Stripe secret API key. Use a test-mode key while setting up and testing the plugin.",
 				"type": "secret"
 			}
-		}
+		},
+		"pages": [
+			{
+				"path": "/stripe-checkout",
+				"label": "Stripe Checkout"
+			}
+		]
 	}
 }
