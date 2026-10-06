@@ -676,13 +676,131 @@ describe("checkProductSchema route", () => {
 			ok: false,
 			collectionExists: false,
 			fields: [
-				{ slug: "name", expectedType: "string", exists: false, valid: false },
-				{ slug: "description", expectedType: "text", exists: false, valid: false },
-				{ slug: "image", expectedType: "image", exists: false, valid: false },
-				{ slug: "price", expectedType: "number", exists: false, valid: false },
-				{ slug: "currency", expectedType: "select", exists: false, valid: false },
-				{ slug: "sku", expectedType: "string", exists: false, valid: false },
-				{ slug: "active", expectedType: "boolean", exists: false, valid: false },
+				{
+					slug: "name",
+					expectedType: "string",
+					required: true,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "description",
+					expectedType: "text",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "image",
+					expectedType: "image",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "price",
+					expectedType: "number",
+					required: true,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "currency",
+					expectedType: "select",
+					required: true,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "sku",
+					expectedType: "string",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "active",
+					expectedType: "boolean",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+			],
+		});
+	});
+
+	it("reports invalid fields in the Products collection schema", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Product Name", type: "string" },
+				{ slug: "description", label: "Description", type: "text" },
+				{ slug: "price", label: "Price", type: "string" },
+				{ slug: "currency", label: "Currency", type: "select", required: true },
+			],
+		});
+
+		const result = await host.transport.invokeRoute(
+			"checkProductSchema",
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			collectionExists: true,
+			fields: [
+				{
+					slug: "name",
+					expectedType: "string",
+					required: true,
+					exists: true,
+					valid: false,
+				},
+				{
+					slug: "description",
+					expectedType: "text",
+					required: false,
+					exists: true,
+					valid: true,
+				},
+				{
+					slug: "image",
+					expectedType: "image",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "price",
+					expectedType: "number",
+					required: true,
+					actualType: "string",
+					exists: true,
+					valid: false,
+				},
+				{
+					slug: "currency",
+					expectedType: "select",
+					required: true,
+					exists: true,
+					valid: true,
+				},
+				{
+					slug: "sku",
+					expectedType: "string",
+					required: false,
+					exists: false,
+					valid: false,
+				},
+				{
+					slug: "active",
+					expectedType: "boolean",
+					required: false,
+					exists: false,
+					valid: false,
+				},
 			],
 		});
 	});

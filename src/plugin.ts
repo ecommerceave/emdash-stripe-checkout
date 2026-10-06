@@ -69,6 +69,7 @@ type ProductSchemaCheck = {
 	fields: Array<{
 		slug: string;
 		expectedType: string;
+		required: boolean;
 		actualType?: string;
 		exists: boolean;
 		valid: boolean;
@@ -87,6 +88,7 @@ async function checkProductSchema(
 			fields: REQUIRED_PRODUCT_FIELDS.map((field) => ({
 				slug: field.slug,
 				expectedType: field.type,
+				required: field.required,
 				exists: false,
 				valid: false,
 			})),
@@ -101,6 +103,7 @@ async function checkProductSchema(
 		return {
 			slug: requiredField.slug,
 			expectedType: requiredField.type,
+			required: requiredField.required,
 			actualType: actualField?.type,
 			exists: Boolean(actualField),
 			valid:
@@ -115,6 +118,32 @@ async function checkProductSchema(
 		collectionExists: true,
 		fields,
 	};
+}
+
+function getProductSchemaGuidance(
+	schema: ProductSchemaCheck,
+): string {
+	const invalidFields = schema.fields.filter(
+		(field) => !field.valid,
+	);
+
+	if (invalidFields.length === 0) {
+		return "The Products collection is configured correctly.";
+	}
+
+	return invalidFields
+		.map((field) => {
+			const requirement = field.required
+				? ", required"
+				: "";
+
+			if (!field.exists) {
+				return `${field.slug}: add ${field.expectedType}${requirement}`;
+			}
+
+			return `${field.slug}: expected ${field.expectedType}${requirement}, found ${field.actualType ?? "unknown"}`;
+		})
+		.join("\n");
 }
 
 async function buildAdminPage(
@@ -218,6 +247,11 @@ async function buildAdminPage(
 					},
 				),
 			]),
+			blocks.section(
+				schema.ok
+					? "The Products collection is configured correctly."
+					: getProductSchemaGuidance(schema),
+			),
 		],
 	};
 }
