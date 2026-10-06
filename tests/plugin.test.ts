@@ -834,6 +834,63 @@ describe("checkProductSchema route", () => {
 
 });
 
+describe("admin route", () => {
+	it("shows Products collection setup guidance on a fresh install", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute(
+			"admin",
+		);
+
+		expect(result).toMatchObject({
+			blocks: expect.any(Array),
+		});
+
+		expect(JSON.stringify(result)).toContain(
+			"Stripe Checkout needs a Products collection before you can add products.",
+		);
+
+		expect(JSON.stringify(result)).toContain(
+			"Product Name — name — string — required",
+		);
+
+		expect(JSON.stringify(result)).toContain(
+			"Price — price — number — required",
+		);
+
+		expect(JSON.stringify(result)).toContain(
+			"Currency — currency — select — required",
+		);
+	});
+
+	it("shows that Products are ready when the schema is valid", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Product Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "text" },
+				{ slug: "image", label: "Product Image", type: "image" },
+				{ slug: "price", label: "Price", type: "number", required: true },
+				{ slug: "currency", label: "Currency", type: "select", required: true },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		const result = await host.transport.invokeRoute(
+			"admin",
+		);
+
+		expect(JSON.stringify(result)).toContain(
+			"Products are ready to use.",
+		);
+	});
+
+});
+
 describe("testStripeConnection route", () => {
 	it("rejects the connection test when the Stripe Secret Key is missing", async () => {
 		host = await createPluginRuntimeTestHost();

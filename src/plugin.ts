@@ -123,6 +123,22 @@ async function checkProductSchema(
 function getProductSchemaGuidance(
 	schema: ProductSchemaCheck,
 ): string {
+	if (!schema.collectionExists) {
+		return [
+			"Stripe Checkout needs a Products collection before you can add products.",
+			"",
+			"Create a collection named Products with these fields:",
+			"",
+			"Product Name — name — string — required",
+			"Description — description — text — optional",
+			"Product Image — image — image — optional",
+			"Price — price — number — required",
+			"Currency — currency — select — required",
+			"SKU — sku — string — optional",
+			"Active — active — boolean — optional",
+		].join("\n");
+	}
+
 	const invalidFields = schema.fields.filter(
 		(field) => !field.valid,
 	);
@@ -131,8 +147,10 @@ function getProductSchemaGuidance(
 		return "The Products collection is configured correctly.";
 	}
 
-	return invalidFields
-		.map((field) => {
+	return [
+		"The Products collection exists, but some fields need attention:",
+		"",
+		...invalidFields.map((field) => {
 			const requirement = field.required
 				? ", required"
 				: "";
@@ -142,8 +160,8 @@ function getProductSchemaGuidance(
 			}
 
 			return `${field.slug}: expected ${field.expectedType}${requirement}, found ${field.actualType ?? "unknown"}`;
-		})
-		.join("\n");
+		}),
+	].join("\n");
 }
 
 async function buildAdminPage(
@@ -238,20 +256,20 @@ async function buildAdminPage(
 				value: schema.ok ? "Valid" : "Needs attention",
 				},
 			]),
+			blocks.section(
+				schema.ok
+					? "Products are ready to use."
+					: getProductSchemaGuidance(schema),
+			),
 			blocks.actions([
 				elements.button(
 					"test-stripe-connection",
 					"Test Stripe Connection",
 					{
-					style: "primary",
+						style: "primary",
 					},
 				),
 			]),
-			blocks.section(
-				schema.ok
-					? "The Products collection is configured correctly."
-					: getProductSchemaGuidance(schema),
-			),
 		],
 	};
 }
