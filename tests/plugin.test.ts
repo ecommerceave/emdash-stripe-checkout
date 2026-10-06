@@ -6,6 +6,7 @@ import {
 } from "@emdash-cms/plugin-test";
 
 const STRIPE_URL = "https://api.stripe.com/v1/checkout/sessions";
+const STRIPE_ACCOUNT_URL = "https://api.stripe.com/v1/account";
 
 let host: PluginRuntimeTestHost | undefined;
 
@@ -710,6 +711,133 @@ describe("checkProductSchema route", () => {
 		expect(result).toMatchObject({
 			ok: true,
 			collectionExists: true,
+		});
+	});
+
+});
+
+describe("testStripeConnection route", () => {
+	it("rejects the connection test when the Stripe Secret Key is missing", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.kv(
+			"state:stripe-connection",
+			{
+				mode: "test",
+				accountId: "acct_old_123",
+				verifiedAt: "2026-10-05T19:00:00.000Z",
+			},
+		);
+
+		const result = await host.transport.invokeRoute(
+			"testStripeConnection",
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Stripe Secret Key is not configured.",
+		});
+
+		const savedConnection = await host.inspect.kv.get(
+			"state:stripe-connection",
+		);
+
+		expect(savedConnection).toBeNull();
+	});
+
+	it("connects to Stripe and returns the account details", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.http.respond(
+			STRIPE_ACCOUNT_URL,
+			new Response(
+				JSON.stringify({
+					id: "acct_test_123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"testStripeConnection",
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			mode: "test",
+			accountId: "acct_test_123",
+		});
+
+		const savedConnection = await host.inspect.kv.get<{
+			mode: "test" | "live";
+			accountId: string;
+			verifiedAt: string;
+		}>("state:stripe-connection");
+
+		expect(savedConnection).toMatchObject({
+			mode: "test",
+			accountId: "acct_test_123",
+		});
+
+		expect(savedConnection?.verifiedAt).toBeTruthy();
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.url).toBe(STRIPE_ACCOUNT_URL);
+		expect(requests[0]?.method).toBe("GET");
+	});
+
+	it("handles an invalid Stripe Secret Key", async () => {
+		host = await createPluginRuntimeTestHost();
+		await host.fixtures.plugin.kv(
+			"state:stripe-connection",
+				{
+					mode: "test",
+					accountId: "acct_old_123",
+					verifiedAt: "2026-10-05T19:00:00.000Z",
+				},
+		);
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_invalid",
+		);
+
+		await host.http.respond(
+			STRIPE_ACCOUNT_URL,
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "Invalid API Key provided",
+					},
+				}),
+				{
+					status: 401,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"testStripeConnection",
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Invalid API Key provided",
 		});
 	});
 

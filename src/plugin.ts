@@ -1,13 +1,14 @@
 import {
-        pluginRoute,
-        type PluginContext,
-        type SandboxedPlugin,
+	pluginRoute,
+	type PluginContext,
+	type SandboxedPlugin,
 } from "emdash/plugin";
 
 import {
-        blocks,
-        elements,
-        type BlockResponse,
+	blocks,
+	elements,
+	type BlockInteraction,
+	type BlockResponse,
 } from "@emdash-cms/blocks/server";
 
 type CheckoutInput = {
@@ -29,6 +30,21 @@ type StripeCheckoutSession = {
 		message?: string;
 	};
 };
+
+type StripeConnectionResult = {
+	ok: boolean;
+	mode?: "test" | "live";
+	accountId?: string;
+	error?: string;
+};
+
+type StripeConnectionState = {
+	mode: "test" | "live";
+	accountId: string;
+	verifiedAt: string;
+};
+
+const STRIPE_CONNECTION_STATE_KEY = "state:stripe-connection";
 
 type StripeProductState = {
     stripeProductId?: string;
@@ -102,11 +118,26 @@ async function checkProductSchema(
 }
 
 async function buildAdminPage(
-    ctx: PluginContext,
+  ctx: PluginContext,
+  stripeConnection?: StripeConnectionResult,
 ): Promise<BlockResponse> {
-    const schema = await checkProductSchema(ctx);
-    const stripeSecretKey =
-        await ctx.settings.get<string>("stripeSecretKey");
+  const schema = await checkProductSchema(ctx);
+  const stripeSecretKey =
+    await ctx.settings.get<string>("stripeSecretKey");
+	const savedConnection =
+		await ctx.kv.get<StripeConnectionState>(
+			STRIPE_CONNECTION_STATE_KEY,
+		);
+	const connection =
+		stripeConnection ??
+		(savedConnection
+			? {
+				ok: true,
+				mode: savedConnection.mode,
+				accountId: savedConnection.accountId,
+				verifiedAt: savedConnection.verifiedAt,
+			}
+			: undefined);
 
 	return {
 		blocks: [
@@ -116,17 +147,76 @@ async function buildAdminPage(
 			),
 			blocks.fields([
 				{
-					label: "Stripe Configuration",
-					value: stripeSecretKey ? "Configured" : "Needs setup",
+				label: "Stripe Connection",
+				value: !stripeSecretKey
+					? "Needs setup"
+					: !connection
+					? "Not tested"
+					: connection.ok
+						? "Connected"
+						: "Connection failed",
 				},
 				{
-					label: "Products Collection",
-					value: schema.collectionExists ? "Found" : "Missing",
+				label: "Connection Details",
+				value: !stripeSecretKey
+					? "Add your Stripe Secret Key in plugin settings."
+					: !connection
+					? "Click Test Stripe Connection to verify your credentials."
+					: connection.ok
+						? "Stripe credentials verified successfully."
+						: connection.error ?? "Unable to connect to Stripe.",
 				},
 				{
-					label: "Product Schema",
-					value: schema.ok ? "Valid" : "Needs attention",
+				label: "Stripe Mode",
+				value: !stripeSecretKey
+					? "Not configured"
+					: !connection
+					? "Pending connection test"
+					: connection.ok
+						? connection.mode === "test"
+						? "Test"
+						: "Live"
+						: "Unavailable",
 				},
+				{
+				label: "Stripe Account",
+				value: !stripeSecretKey
+					? "Not configured"
+					: !connection
+					? "Pending connection test"
+					: connection.ok && connection.accountId
+						? connection.accountId
+						: "Unavailable",
+				},
+				{
+				label: "Last Verified",
+				value:
+					connection?.ok && savedConnection?.verifiedAt
+					? `${new Date(savedConnection.verifiedAt).toLocaleString(
+						ctx.site.locale,
+						{
+							timeZone: "UTC",
+						},
+						)} UTC`
+					: "Never",
+				},
+				{
+				label: "Products Collection",
+				value: schema.collectionExists ? "Found" : "Missing",
+				},
+				{
+				label: "Product Schema",
+				value: schema.ok ? "Valid" : "Needs attention",
+				},
+			]),
+			blocks.actions([
+				elements.button(
+					"test-stripe-connection",
+					"Test Stripe Connection",
+					{
+					style: "primary",
+					},
+				),
 			]),
 		],
 	};
@@ -166,6 +256,75 @@ function isVerifyCheckoutInput(value: unknown): value is VerifyCheckoutInput {
 		typeof data.productId === "string" &&
 		data.productId.trim().length > 0
 	);
+}
+
+async function testStripeConnection(
+	ctx: PluginContext,
+): Promise<StripeConnectionResult> {
+	const stripeSecretKey =
+		await ctx.settings.get<string>("stripeSecretKey");
+
+	if (!stripeSecretKey) {
+		await ctx.kv.delete(STRIPE_CONNECTION_STATE_KEY);
+
+		return {
+			ok: false,
+			error: "Stripe Secret Key is not configured.",
+		};
+	}
+
+	if (!ctx.http) {
+		return {
+			ok: false,
+			error: "Network access is not available.",
+		};
+	}
+
+	const response = await ctx.http.fetch(
+		"https://api.stripe.com/v1/account",
+		{
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${stripeSecretKey}`,
+			},
+		},
+	);
+
+	const data = (await response.json()) as {
+		id?: string;
+		error?: {
+		message?: string;
+		};
+	};
+
+	if (!response.ok) {
+		await ctx.kv.delete(STRIPE_CONNECTION_STATE_KEY);
+
+		return {
+			ok: false,
+			error:
+			data.error?.message ??
+			"Unable to connect to Stripe.",
+		};
+	}
+
+	const mode = stripeSecretKey.startsWith("sk_test_")
+		? "test"
+		: "live";
+
+		if (data.id) {
+			await ctx.kv.set(STRIPE_CONNECTION_STATE_KEY, {
+				mode,
+				accountId: data.id,
+				verifiedAt: new Date().toISOString(),
+			});
+		}
+
+		return {
+			ok: true,
+			mode,
+			accountId: data.id,
+	};
 }
 
 const plugin: SandboxedPlugin = {
@@ -445,7 +604,33 @@ const plugin: SandboxedPlugin = {
 			request: {
 				body: "json",
 			},
-			handler: async (_routeCtx, ctx) => {
+			handler: async (routeCtx, ctx) => {
+				const interaction =
+					routeCtx.input as BlockInteraction;
+
+				if (
+					interaction.type === "block_action" &&
+					interaction.action_id === "test-stripe-connection"
+				) {
+					const stripeConnection =
+						await testStripeConnection(ctx);
+
+						const response = await buildAdminPage(
+						ctx,
+						stripeConnection,
+						);
+
+						response.toast = {
+						message: stripeConnection.ok
+							? "Stripe connection verified successfully."
+							: stripeConnection.error ??
+							"Unable to connect to Stripe.",
+						type: stripeConnection.ok ? "success" : "error",
+						};
+
+						return response;
+				}
+
 				return await buildAdminPage(ctx);
 			},
 		}),
@@ -457,6 +642,16 @@ const plugin: SandboxedPlugin = {
 			},
 			handler: async (_routeCtx, ctx) => {
 				return await checkProductSchema(ctx);
+			},
+		}),
+
+		testStripeConnection: pluginRoute({
+			methods: ["POST"],
+			request: {
+				body: "none",
+			},
+			handler: async (_routeCtx, ctx) => {
+				return await testStripeConnection(ctx);
 			},
 		}),
 		
