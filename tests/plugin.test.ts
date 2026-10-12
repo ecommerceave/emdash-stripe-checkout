@@ -785,7 +785,7 @@ describe("checkProductSchema route", () => {
 					expectedType: "select",
 					required: true,
 					exists: true,
-					valid: true,
+					valid: false,
 				},
 				{
 					slug: "sku",
@@ -816,7 +816,16 @@ describe("checkProductSchema route", () => {
 				{ slug: "description", label: "Description", type: "text" },
 				{ slug: "image", label: "Product Image", type: "image" },
 				{ slug: "price", label: "Price", type: "number", required: true },
-				{ slug: "currency", label: "Currency", type: "select", required: true },
+				{
+					slug: "currency",
+					label: "Currency",
+					type: "select",
+					required: true,
+					default: "USD",
+					validation: {
+						options: ["USD", "CAD", "EUR", "GBP"],
+					},
+				},
 				{ slug: "sku", label: "SKU", type: "string" },
 				{ slug: "active", label: "Active", type: "boolean" },
 			],
@@ -847,19 +856,19 @@ describe("admin route", () => {
 		});
 
 		expect(JSON.stringify(result)).toContain(
-			"Stripe Checkout needs a Products collection before you can add products.",
+			"Stripe Checkout requires a Products collection.",
 		);
 
 		expect(JSON.stringify(result)).toContain(
-			"Product Name — name — string — required",
+			"Name — name — String — Required",
 		);
 
 		expect(JSON.stringify(result)).toContain(
-			"Price — price — number — required",
+			"Price — price — Number — Required",
 		);
 
 		expect(JSON.stringify(result)).toContain(
-			"Currency — currency — select — required",
+			"Currency — currency — Select — Required",
 		);
 	});
 
@@ -874,7 +883,16 @@ describe("admin route", () => {
 				{ slug: "description", label: "Description", type: "text" },
 				{ slug: "image", label: "Product Image", type: "image" },
 				{ slug: "price", label: "Price", type: "number", required: true },
-				{ slug: "currency", label: "Currency", type: "select", required: true },
+				{
+					slug: "currency",
+					label: "Currency",
+					type: "select",
+					required: true,
+					default: "USD",
+					validation: {
+						options: ["USD", "CAD", "EUR", "GBP"],
+					},
+				},
 				{ slug: "sku", label: "SKU", type: "string" },
 				{ slug: "active", label: "Active", type: "boolean" },
 			],

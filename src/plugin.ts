@@ -109,7 +109,11 @@ async function checkProductSchema(
 			valid:
 				Boolean(actualField) &&
 				actualField?.type === requiredField.type &&
-				(!requiredField.required || actualField.required),
+				(!requiredField.required || actualField.required) &&
+				(requiredField.slug !== "currency" ||
+					["USD", "CAD", "EUR", "GBP"].every((currency) =>
+						actualField?.validation?.options?.includes(currency),
+					)),
 		};
 	});
 
@@ -125,17 +129,32 @@ function getProductSchemaGuidance(
 ): string {
 	if (!schema.collectionExists) {
 		return [
-			"Stripe Checkout needs a Products collection before you can add products.",
+			"Stripe Checkout requires a Products collection.",
 			"",
-			"Create a collection named Products with these fields:",
+			"SETUP INSTRUCTIONS",
 			"",
-			"Product Name — name — string — required",
-			"Description — description — text — optional",
-			"Product Image — image — image — optional",
-			"Price — price — number — required",
-			"Currency — currency — select — required",
-			"SKU — sku — string — optional",
-			"Active — active — boolean — optional",
+			"1. Open Collections in your EmDash admin.",
+			"2. Create a new collection with:",
+			"   Name: Products",
+			"   Slug: products",
+			"",
+			"3. Add the following fields:",
+			"",
+			"Name — name — String — Required",
+			"Description — description — Text — Optional",
+			"Image — image — Image — Optional",
+			"Price — price — Number — Required",
+			"Currency — currency — Select — Required",
+			"SKU — sku — String — Optional",
+			"Active — active — Boolean — Optional",
+			"",
+			"4. Configure the Currency field:",
+			"   Options: USD, CAD, EUR, GBP",
+			"   Default: USD",
+			"",
+			"5. Save your collection and return to Stripe Checkout.",
+			"",
+			"The plugin will automatically detect the collection.",
 		].join("\n");
 	}
 
