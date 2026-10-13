@@ -780,6 +780,15 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
+				const product = await ctx.content?.get("products", productId);
+
+				if (!product || (product.data?.active !== true && product.data?.active !== 1)) {
+					return {
+						ok: false,
+						error: "This product is currently unavailable for purchase.",
+					};
+				}
+
 				const priceId = stripeState.stripePriceId;
 
 				const body = new URLSearchParams();

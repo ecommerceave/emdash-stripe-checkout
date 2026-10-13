@@ -19,6 +19,23 @@ describe("createCheckoutSession route", () => {
 	it("creates a Stripe Checkout session", async () => {
 		host = await createPluginRuntimeTestHost();
 
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			data: {
+				name: "Test Product",
+				active: true,
+			},
+		});
+		
 		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
 
 		await host.fixtures.plugin.kv("state:product:product_test_123", {
@@ -76,6 +93,51 @@ describe("createCheckoutSession route", () => {
 
 	});
 
+	it("rejects checkout for an inactive product", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_inactive",
+			data: {
+				name: "Inactive Test Product",
+				active: false,
+			},
+		});
+
+		await host.fixtures.plugin.kv("state:product:product_inactive", {
+			stripeProductId: "prod_test_inactive",
+			stripePriceId: "price_test_inactive",
+			price: 25,
+			currency: "usd",
+		});
+
+		const result = await host.transport.invokeRoute(
+			"createCheckoutSession",
+			{
+				productId: "product_inactive",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "This product is currently unavailable for purchase.",
+		});
+	});
+
 	it("rejects an invalid checkout request", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -105,6 +167,23 @@ describe("createCheckoutSession route", () => {
 
 	it("handles a Stripe API error", async () => {
 		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_bad",
+			data: {
+				name: "Test Product",
+				active: true,
+			},
+		});
 
 		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
 
@@ -821,7 +900,6 @@ describe("checkProductSchema route", () => {
 					label: "Currency",
 					type: "select",
 					required: true,
-					default: "USD",
 					validation: {
 						options: ["USD", "CAD", "EUR", "GBP"],
 					},
@@ -888,7 +966,6 @@ describe("admin route", () => {
 					label: "Currency",
 					type: "select",
 					required: true,
-					default: "USD",
 					validation: {
 						options: ["USD", "CAD", "EUR", "GBP"],
 					},
