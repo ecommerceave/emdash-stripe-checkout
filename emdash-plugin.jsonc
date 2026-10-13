@@ -5,7 +5,23 @@
 	"publisher": "did:plc:wlshattmcjplayfxlgzbhxvk", // ecommerceave.com
 
 	"license": "MIT",
-	"author": { "name": "Brandon Livengood" },
+
+	"name": "Stripe Checkout for EmDash",
+	"description": "Accept payments through Stripe Checkout with a simple e-commerce integration for EmDash.",
+
+	"keywords": [
+	"stripe",
+	"stripe checkout",
+	"payments",
+	"ecommerce",
+	"online store"
+	],
+
+	"author": {
+	"name": "eCommerce Ave",
+	"url": "https://ecommerceave.com"
+	},
+
 	"security": { "email": "support@ecommerceave.com" },
 	"repo": "https://github.com/ecommerceave/emdash-stripe-checkout",
 
