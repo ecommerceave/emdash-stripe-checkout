@@ -17,6 +17,10 @@
 	"online store"
 	],
 
+	"sections": {
+		"description": "Stripe Checkout for EmDash connects your EmDash website with Stripe, providing a foundation for accepting online payments through Stripe's hosted checkout experience.\n\n### Features\n\n- Connect your Stripe account using a secret API key.\n- Configure the integration from your EmDash admin dashboard.\n- Integrate with Stripe's hosted checkout experience.\n\n### Getting Started\n\nInstall the plugin and configure your Stripe API key in the EmDash admin dashboard. We recommend using a Stripe test-mode key during initial setup.\n\n### About eCommerce Ave\n\nDeveloped by [eCommerce Ave](https://ecommerceave.com), creating practical integrations and e-commerce tools for EmDash."
+	},
+
 	"author": {
 	"name": "eCommerce Ave",
 	"url": "https://ecommerceave.com"
