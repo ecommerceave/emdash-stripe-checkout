@@ -18,15 +18,25 @@ Stripe Checkout allows EmDash users to sell products through Stripe's hosted che
 
 ## Installation
 
-1. Install the Stripe Checkout plugin package in your EmDash project.
-2. Register the plugin in your site's `astro.config.mjs` file using the instructions below.
-3. Restart your EmDash application.
-4. Open the EmDash administration dashboard.
-5. Navigate to **Plugins → Stripe Checkout**.
-6. Configure your Stripe Secret Key in the plugin settings.
-7. Click **Test Stripe Connection** to verify your Stripe account.
+Stripe Checkout is available through the EmDash Plugin Registry.
 
-### Register the Plugin
+### Install from the Plugin Registry
+
+1. Open your EmDash administration dashboard.
+2. Navigate to **Plugins**.
+3. Find **Stripe Checkout** by eCommerce Ave in the plugin registry.
+4. Install and enable the plugin.
+5. Open the Stripe Checkout plugin settings.
+6. Enter your Stripe Secret Key.
+7. Click **Test Stripe Connection** to verify your connection.
+
+**Plugin Registry:** https://plugins.emdashcms.com/plugins/@ecommerceave.com/emdash-stripe-checkout
+
+No manual changes to `astro.config.mjs` are required when installing through the registry.
+
+### Local Development Installation
+
+The following instructions are intended for developers working with a local copy of Stripe Checkout. If you installed the plugin through the EmDash Plugin Registry, you can skip this section.
 
 Open your EmDash site's `astro.config.mjs` file.
 
@@ -116,6 +126,122 @@ Stripe Checkout uses Stripe's hosted payment pages to process customer payments.
 3. Publish the product.
 4. Stripe Checkout automatically creates the corresponding product and price in Stripe.
 5. When an existing product's price changes, the plugin creates a new Stripe Price.
+
+### Integrating a Buy Now Button
+
+The examples below use the registry ID for the official eCommerce Ave Stripe Checkout plugin (`@ecommerceave.com/emdash-stripe-checkout`).
+
+EmDash generates this ID deterministically from the plugin's publisher DID and slug. It remains consistent across installations using the same registry identity and ID-generation algorithm.
+
+If you are developing with a locally registered version of the plugin, your plugin ID may differ. Update the API endpoint accordingly.
+
+Stripe Checkout provides a public API endpoint that allows an EmDash website to create a Stripe-hosted checkout session.
+
+**Endpoint:**
+
+`/_emdash/api/plugins/r_2gmaxm63r5xhxist/createCheckoutSession`
+
+**Method:** `POST`
+
+**Request body:**
+
+```json
+{
+  "productId": "YOUR_EMDASH_PRODUCT_ID",
+  "returnPath": "/products/example-product"
+}
+```
+
+**Example JavaScript:**
+
+```javascript
+async function startCheckout(productId) {
+  const response = await fetch(
+    "/_emdash/api/plugins/r_2gmaxm63r5xhxist/createCheckoutSession",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        productId,
+        returnPath: window.location.pathname,
+      }),
+    }
+  );
+
+  const result = await response.json();
+
+  if (!result.success || !result.data?.checkoutUrl) {
+    throw new Error(
+      result.data?.error || result.error?.message || "Unable to start checkout."
+    );
+  }
+
+  window.location.href = result.data.checkoutUrl;
+}
+```
+
+Call `startCheckout(productId)` when the customer clicks a Buy Now button.
+
+The plugin creates a Stripe Checkout session and returns a hosted checkout URL.
+
+**Important:** Use the EmDash product's internal ID, not its slug or SKU. The product must be published, active, and synchronized with Stripe.
+
+### Verifying a Successful Payment
+
+After checkout, Stripe redirects the customer back to your website.
+
+**Important:** A successful redirect does not guarantee that payment was completed. Always verify the Checkout Session before displaying a payment confirmation.
+
+**Endpoint:**
+
+`/_emdash/api/plugins/r_2gmaxm63r5xhxist/verifyCheckoutSession`
+
+**Method:** `POST`
+
+**Request body:**
+
+```json
+{
+  "sessionId": "cs_test_EXAMPLE_SESSION_ID",
+  "productId": "YOUR_EMDASH_PRODUCT_ID"
+}
+```
+
+**Example JavaScript:**
+
+```javascript
+async function verifyPayment(sessionId, productId) {
+  const response = await fetch(
+    "/_emdash/api/plugins/r_2gmaxm63r5xhxist/verifyCheckoutSession",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sessionId,
+        productId,
+      }),
+    }
+  );
+
+  const result = await response.json();
+
+  if (result.success && result.data?.paid === true) {
+    return true;
+  }
+
+  return false;
+}
+```
+
+Call `verifyPayment(sessionId, productId)` after the customer returns from Stripe Checkout.
+
+Only display a successful payment confirmation when the plugin confirms the payment.
+
+**Production note:** Browser-side verification is useful for displaying payment status, but it should not be the sole mechanism for fulfilling orders or delivering digital products. Reliable fulfillment should use server-side verification and an appropriate webhook or reconciliation process.
 
 ### Customer Checkout
 
