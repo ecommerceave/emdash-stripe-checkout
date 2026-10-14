@@ -12,7 +12,13 @@ import {
 	type BlockResponse,
 } from "@emdash-cms/blocks/server";
 
-import { createOrder, getOrder, updateOrder } from "./orders/storage.js";
+import {
+  createOrder,
+  getOrder,
+  listOrders,
+  updateOrder,
+} from "./orders/storage.js";
+
 import type { Order } from "./orders/types.js";
 import { verifyStripeWebhookSignature } from "./stripe/webhooks.js";
 
@@ -208,8 +214,12 @@ function getProductSchemaGuidance(
 async function buildAdminPage(
   ctx: PluginContext,
   stripeConnection?: StripeConnectionResult,
+  ordersCursor?: string,
 ): Promise<BlockResponse> {
   const schema = await checkProductSchema(ctx);
+  const { orders, cursor: nextCursor, hasMore } =
+    await listOrders(ctx, ordersCursor);
+  
   const stripeSecretKey =
     await ctx.settings.get<string>("stripeSecretKey");
 	const savedConnection =
@@ -311,6 +321,42 @@ async function buildAdminPage(
 					},
 				),
 			]),
+			blocks.header("Orders"),
+			blocks.section(
+				orders.length === 0
+					? "No orders have been placed yet."
+					: `Showing ${orders.length} recent orders.`,
+				),
+				blocks.table({
+				blockId: "stripe-orders-table",
+				columns: [
+					{ key: "order", label: "Order", format: "code" },
+					{ key: "customer", label: "Customer", format: "text" },
+					{ key: "quantity", label: "Qty", format: "number" },
+					{ key: "amount", label: "Amount", format: "text" },
+					{ key: "status", label: "Status", format: "badge" },
+					{ key: "date", label: "Date", format: "text" },
+				],
+				rows: orders.map((order) => ({
+					order: `#${order.id.slice(-8).toUpperCase()}`,
+					customer: order.customerEmail ?? "Not provided",
+					quantity: order.quantity,
+					amount:
+					order.amountTotal != null && order.currency
+						? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
+						: "Unavailable",
+					status: order.paymentStatus,
+					date:
+					new Date(order.createdAt).toLocaleString("en-US", {
+						dateStyle: "medium",
+						timeStyle: "short",
+						timeZone: "UTC",
+					}) + " UTC",
+				})),
+				nextCursor: hasMore ? nextCursor : undefined,
+				pageActionId: "stripe-orders-next-page",
+				emptyText: "No orders have been placed yet.",
+			}),
 		],
 	};
 }
@@ -724,6 +770,23 @@ const plugin: SandboxedPlugin = {
 						return response;
 				}
 
+				if (
+					interaction.type === "block_action" &&
+					interaction.action_id === "stripe-orders-next-page"
+					) {
+					const value = interaction.value;
+
+					const cursor =
+						typeof value === "object" &&
+						value !== null &&
+						"cursor" in value &&
+						typeof value.cursor === "string"
+						? value.cursor
+						: undefined;
+
+					return await buildAdminPage(ctx, undefined, cursor);
+				}
+				
 				return await buildAdminPage(ctx);
 			},
 		}),

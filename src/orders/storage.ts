@@ -62,3 +62,27 @@ export async function updateOrder(
 
   return result.applied;
 }
+
+/**
+ * Retrieve orders, newest first, with cursor-based pagination.
+ */
+export async function listOrders(
+  ctx: PluginContext,
+  cursor?: string,
+): Promise<{
+  orders: Order[];
+  cursor?: string;
+  hasMore: boolean;
+}> {
+  const result = await ctx.storage.orders.query({
+    orderBy: { createdAt: "desc" },
+    limit: 25,
+    ...(cursor ? { cursor } : {}),
+  });
+
+  return {
+    orders: result.items.map((item) => item.data as Order),
+    cursor: result.cursor,
+    hasMore: result.hasMore,
+  };
+}
