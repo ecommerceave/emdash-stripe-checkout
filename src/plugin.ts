@@ -1,5 +1,6 @@
 import {
 	pluginRoute,
+	pluginResponse,
 	type PluginContext,
 	type SandboxedPlugin,
 } from "emdash/plugin";
@@ -10,6 +11,10 @@ import {
 	type BlockInteraction,
 	type BlockResponse,
 } from "@emdash-cms/blocks/server";
+
+import { createOrder, getOrder, updateOrder } from "./orders/storage.js";
+import type { Order } from "./orders/types.js";
+import { verifyStripeWebhookSignature } from "./stripe/webhooks.js";
 
 type CheckoutInput = {
 	productId: string;
@@ -26,9 +31,26 @@ type StripeCheckoutSession = {
 	url?: string;
 	payment_status?: string;
 	client_reference_id?: string;
+	amount_total?: number | null;
+	currency?: string | null;
 	error?: {
-		message?: string;
+	message?: string;
 	};
+};
+
+type StripeWebhookEvent = {
+    id: string;
+    type: string;
+    data: {
+        object: {
+            id?: string;
+            payment_status?: string;
+            client_reference_id?: string;
+            customer_details?: {
+                email?: string | null;
+            } | null;
+        };
+    };
 };
 
 type StripeConnectionResult = {
@@ -407,7 +429,7 @@ const plugin: SandboxedPlugin = {
 
 			const product = event.content.data as Record<string, unknown>;
 			const contentId = String(event.content.id);
-			
+
 			const stateKey = `state:product:${contentId}`;
 			const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
 
@@ -525,7 +547,7 @@ const plugin: SandboxedPlugin = {
 				await ctx.kv.set(stateKey, {
 					stripeProductId: stripeProduct.id,
 				});
-				
+
 				console.log("[PLUGIN] Stripe Product created", {
 					emdashContentId: contentId,
 					stripeProductId: stripeProduct.id,
@@ -586,7 +608,7 @@ const plugin: SandboxedPlugin = {
 				currentState.stripeProductId &&
 				(!currentState.stripePriceId || priceChanged)
 			) {
-				
+
 				const stripePriceBody = new URLSearchParams();
 
 				stripePriceBody.set("product", currentState.stripeProductId);
@@ -705,7 +727,7 @@ const plugin: SandboxedPlugin = {
 				return await buildAdminPage(ctx);
 			},
 		}),
-		
+
 		checkProductSchema: pluginRoute({
 			methods: ["GET"],
 			request: {
@@ -725,7 +747,7 @@ const plugin: SandboxedPlugin = {
 				return await testStripeConnection(ctx);
 			},
 		}),
-		
+
 		createCheckoutSession: pluginRoute({
 			public: true,
 			methods: ["POST"],
@@ -843,6 +865,52 @@ const plugin: SandboxedPlugin = {
 					};
 				}
 
+				if (!stripeResponse.id) {
+					return {
+						ok: false,
+						error: "Stripe did not return a Checkout Session ID.",
+					};
+				}
+
+				const now = new Date().toISOString();
+
+				const order: Order = {
+				id: stripeResponse.id,
+				stripeSessionId: stripeResponse.id,
+				productId,
+				quantity: 1,
+				amountTotal: stripeResponse.amount_total ?? null,
+				currency: stripeResponse.currency ?? null,
+				paymentStatus: "pending",
+				customerEmail: null,
+				createdAt: now,
+				updatedAt: now,
+				paidAt: null,
+				};
+
+				let orderCreated = false;
+
+				try {
+					orderCreated = await createOrder(ctx, order);
+				} catch (error) {
+					ctx.log.error("Failed to save Stripe Checkout order", {
+						sessionId: stripeResponse.id,
+						message: error instanceof Error ? error.message : String(error),
+					});
+
+					return {
+						ok: false,
+						error: "Checkout was created, but the order could not be saved. Please try again.",
+					};
+				}
+
+				if (!orderCreated) {
+					return {
+						ok: false,
+						error: "An order already exists for this Checkout Session.",
+					};
+				}
+
 				ctx.log.info("Stripe Checkout session created", {
 					sessionId: stripeResponse.id,
 					priceId,
@@ -853,6 +921,188 @@ const plugin: SandboxedPlugin = {
 					sessionId: stripeResponse.id,
 					checkoutUrl: stripeResponse.url,
 				};
+			},
+		}),
+		stripeWebhook: pluginRoute({
+			public: true,
+			methods: ["POST"],
+			response: "raw",
+			request: {
+				body: "bytes",
+				headers: ["stripe-signature"],
+				maxBytes: 65536,
+			},
+			handler: async (routeCtx, ctx) => {
+				const webhookSecret =
+					await ctx.settings.get<string>("stripeWebhookSecret");
+
+				if (!webhookSecret) {
+					ctx.log.error("Stripe webhook signing secret is not configured.");
+
+					return pluginResponse({
+						status: 503,
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: {
+							kind: "text",
+							value: JSON.stringify({
+								ok: false,
+								error: "Webhook is not configured.",
+							}),
+						},
+					});
+				}
+
+				const signature =
+					routeCtx.request.headers["stripe-signature"];
+
+				if (!signature) {
+					return pluginResponse({
+						status: 400,
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: {
+							kind: "text",
+							value: JSON.stringify({
+								ok: false,
+								error: "Missing Stripe signature.",
+							}),
+						},
+					});
+				}
+
+				const valid = await verifyStripeWebhookSignature(
+					routeCtx.input,
+					signature,
+					webhookSecret
+				);
+
+				if (!valid) {
+					return pluginResponse({
+						status: 400,
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: {
+							kind: "text",
+							value: JSON.stringify({
+								ok: false,
+								error: "Invalid Stripe signature.",
+							}),
+						},
+					});
+				}
+
+				let event: StripeWebhookEvent;
+
+				try {
+					event = JSON.parse(
+						new TextDecoder().decode(routeCtx.input)
+					) as StripeWebhookEvent;
+				} catch {
+					return pluginResponse({
+						status: 400,
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: {
+							kind: "text",
+							value: JSON.stringify({
+								ok: false,
+								error: "Invalid webhook JSON.",
+							}),
+						},
+					});
+				}
+
+				ctx.log.info("Verified Stripe webhook received", {
+					eventId: event.id,
+					eventType: event.type,
+				});
+
+				if (event.type === "checkout.session.completed") {
+					const session = event.data?.object;
+
+					if (
+						session?.id?.startsWith("cs_") &&
+						session.payment_status === "paid"
+					) {
+						ctx.log.info("Stripe Checkout payment confirmed", {
+							eventId: event.id,
+							sessionId: session.id,
+						});
+
+						const order = await getOrder(ctx, session.id);
+
+						if (!order) {
+							ctx.log.error("Stripe webhook: matching order not found", {
+								eventId: event.id,
+								sessionId: session.id,
+							});
+
+							return pluginResponse({
+								status: 500,
+								headers: {
+									"Content-Type": "application/json",
+								},
+								body: {
+									kind: "text",
+									value: JSON.stringify({
+										ok: false,
+										error: "Matching order not found.",
+									}),
+								},
+							});
+						} else {
+							ctx.log.info("Stripe webhook: matching order found", {
+								orderId: order.id,
+								paymentStatus: order.paymentStatus,
+							});
+							if (order.paymentStatus !== "paid") {
+								if (
+									session.client_reference_id !== order.productId ||
+									session.id !== order.stripeSessionId
+								) {
+									ctx.log.error("Stripe webhook: order mismatch", {
+										eventId: event.id,
+										sessionId: session.id,
+									});
+									throw new Error("Stripe webhook order mismatch.");
+								}
+
+								const updated = await updateOrder(ctx, session.id, {
+									paymentStatus: "paid",
+									paidAt: new Date().toISOString(),
+									customerEmail: session.customer_details?.email ?? null,
+								});
+
+								if (!updated) {
+									throw new Error("Stripe webhook order update failed.");
+								}
+
+								ctx.log.info("Stripe webhook: order marked as paid", {
+									orderId: order.id,
+								});
+							}
+						}
+					}
+				}
+
+				return pluginResponse({
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: {
+						kind: "text",
+						value: JSON.stringify({
+							ok: true,
+							verified: true,
+						}),
+					},
+				});
 			},
 		}),
 		verifyCheckoutSession: pluginRoute({
@@ -925,7 +1175,43 @@ const plugin: SandboxedPlugin = {
 						error: "Checkout Session does not match this product.",
 					};
 				}
-				
+
+				if (stripeResponse.payment_status === "paid") {
+					const order = await getOrder(ctx, sessionId);
+
+					if (!order) {
+						ctx.log.error("Paid Stripe Checkout Session has no matching order", {
+							sessionId,
+						});
+
+						return {
+							ok: false,
+							error: "Payment was confirmed, but the order was not found.",
+						};
+					}
+
+					if (order.productId !== productId) {
+						return {
+							ok: false,
+							error: "Order does not match this product.",
+						};
+					}
+
+					if (order.paymentStatus !== "paid") {
+						const updated = await updateOrder(ctx, sessionId, {
+							paymentStatus: "paid",
+							paidAt: new Date().toISOString(),
+						});
+
+						if (!updated) {
+							return {
+								ok: false,
+								error: "Payment was confirmed, but the order could not be updated.",
+							};
+						}
+					}
+				}
+
 				return {
 					ok: true,
 					sessionId: stripeResponse.id,

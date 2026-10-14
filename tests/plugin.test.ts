@@ -228,6 +228,22 @@ describe("createCheckoutSession route", () => {
 
 		const sessionId = "cs_test_paid123";
 
+		const now = new Date().toISOString();
+
+		await host.fixtures.plugin.storage("orders", sessionId, {
+			id: sessionId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "pending",
+			customerEmail: null,
+			createdAt: now,
+			updatedAt: now,
+			paidAt: null,
+		});
+
 		await host.http.respond(
 			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
 			new Response(

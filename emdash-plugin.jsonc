@@ -45,13 +45,29 @@
 		"api.stripe.com"
 	],
 
-	"storage": {},
+	"storage": {
+		"orders": {
+			"indexes": [
+			"paymentStatus",
+			"createdAt",
+			"productId"
+			],
+			"uniqueIndexes": [
+			"stripeSessionId"
+			]
+		}
+	},
 
 	"admin": {
         "settingsSchema": {
 			"stripeSecretKey": {
 				"label": "Stripe Secret Key",
 				"description": "Your Stripe secret API key. Use a test-mode key while setting up and testing the plugin.",
+				"type": "secret"
+			},
+			"stripeWebhookSecret": {
+				"label": "Stripe Webhook Signing Secret",
+				"description": "The webhook signing secret provided by Stripe (starts with whsec_). Used to verify incoming Stripe webhook events.",
 				"type": "secret"
 			}
 		},
