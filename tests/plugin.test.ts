@@ -1192,6 +1192,393 @@ describe("admin route", () => {
 		expect(output).toContain("Back to Orders");
 	});
 
+	it("successfully refunds a paid order through the admin action", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "cs_test_refund_success_123";
+		const paymentIntentId = "pi_test_refund_success_123";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: orderId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "paid",
+			customerEmail: "customer@example.com",
+			createdAt: "2026-10-15T12:00:00.000Z",
+			updatedAt: "2026-10-15T12:00:00.000Z",
+			paidAt: "2026-10-15T12:00:00.000Z",
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${orderId}`,
+			new Response(
+			JSON.stringify({
+				id: orderId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/refunds",
+			new Response(
+			JSON.stringify({
+				id: "re_test_success_123",
+				status: "succeeded",
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-confirm",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Full refund completed successfully");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refunded",
+			stripeRefundId: "re_test_success_123",
+			refundStatus: "succeeded",
+		});
+
+		expect(storedOrder).toHaveProperty(
+			"refundedAt",
+			expect.any(String),
+		);
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests[0].method).toBe("GET");
+		expect(requests[1].method).toBe("POST");
+
+		expect(requests[1].url).toBe("https://api.stripe.com/v1/refunds");
+		expect(requests[1].headers).toMatchObject({
+			"idempotency-key": `emdash-refund-${orderId}`,
+		});
+	});
+	
+	it("prevents a second refund request for an already refunded order", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "cs_test_refund_duplicate_123";
+		const paymentIntentId = "pi_test_refund_duplicate_123";
+		const refundId = "re_test_duplicate_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: orderId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "paid",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		// Mock the Stripe Checkout Session lookup.
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${orderId}`,
+			new Response(
+			JSON.stringify({
+				id: orderId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		// Mock a successful Stripe refund.
+		await host.http.respond(
+			"https://api.stripe.com/v1/refunds",
+			new Response(
+			JSON.stringify({
+				id: refundId,
+				status: "succeeded",
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		// First refund attempt should succeed.
+		const firstResult = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-confirm",
+			value: orderId,
+		});
+
+		expect(JSON.stringify(firstResult)).toContain(
+			"Full refund completed successfully",
+		);
+
+		const orderAfterFirstRefund = await host.inspect.storage.get(
+			"orders",
+			orderId,
+		);
+
+		expect(orderAfterFirstRefund).toMatchObject({
+			paymentStatus: "refunded",
+			stripeRefundId: refundId,
+			refundStatus: "succeeded",
+		});
+
+		expect(orderAfterFirstRefund).toHaveProperty(
+			"refundedAt",
+			expect.any(String),
+		);
+
+		// Attempt to refund the same order again.
+		const secondResult = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-confirm",
+			value: orderId,
+		});
+
+		const secondOutput = JSON.stringify(secondResult);
+
+		// The second attempt must be rejected.
+		expect(secondOutput).toContain("Refund Unavailable");
+		expect(secondOutput).toContain(
+			"This order was not found or is no longer eligible for a refund.",
+		);
+
+		// The order must remain refunded.
+		const orderAfterSecondAttempt = await host.inspect.storage.get(
+			"orders",
+			orderId,
+		);
+
+		expect(orderAfterSecondAttempt).toMatchObject({
+			paymentStatus: "refunded",
+			stripeRefundId: refundId,
+			refundStatus: "succeeded",
+		});
+
+		// Stripe must receive only one refund POST request.
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+
+		const refundRequests = requests.filter(
+			(request) =>
+			request.method === "POST" &&
+			request.url === "https://api.stripe.com/v1/refunds",
+		);
+
+		expect(refundRequests).toHaveLength(1);
+
+		expect(refundRequests[0].headers).toMatchObject({
+			"idempotency-key": `emdash-refund-${orderId}`,
+		});
+	});
+	
+	it("records a pending refund through the admin action", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "cs_test_refund_pending_123";
+		const paymentIntentId = "pi_test_refund_pending_123";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: orderId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "paid",
+			customerEmail: "customer@example.com",
+			createdAt: "2026-10-15T12:00:00.000Z",
+			updatedAt: "2026-10-15T12:00:00.000Z",
+			paidAt: "2026-10-15T12:00:00.000Z",
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${orderId}`,
+			new Response(
+			JSON.stringify({
+				id: orderId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/refunds",
+			new Response(
+			JSON.stringify({
+				id: "re_test_pending_123",
+				status: "pending",
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-confirm",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Refund Pending");
+		expect(output).toContain("re_test_pending_123");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_pending",
+			stripeRefundId: "re_test_pending_123",
+			refundStatus: "pending",
+		});
+
+		expect(storedOrder).not.toHaveProperty("refundedAt");
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests[0].method).toBe("GET");
+		expect(requests[1].method).toBe("POST");
+
+		expect(requests[1].url).toBe("https://api.stripe.com/v1/refunds");
+
+		expect(requests[1].headers).toMatchObject({
+			"idempotency-key": `emdash-refund-${orderId}`,
+		});
+	});
+
+	it("keeps an order locked when Stripe rejects the refund request", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "cs_test_refund_rejected_123";
+		const paymentIntentId = "pi_test_refund_rejected_123";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: orderId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "paid",
+			customerEmail: "customer@example.com",
+			createdAt: "2026-10-15T12:00:00.000Z",
+			updatedAt: "2026-10-15T12:00:00.000Z",
+			paidAt: "2026-10-15T12:00:00.000Z",
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${orderId}`,
+			new Response(
+			JSON.stringify({
+				id: orderId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		// Simulate Stripe rejecting the refund request.
+		await host.http.respond(
+			"https://api.stripe.com/v1/refunds",
+			new Response(
+			JSON.stringify({
+				error: {
+				message: "Charge has already been refunded.",
+				},
+			}),
+			{
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-confirm",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		// Administrator must receive a reconciliation warning.
+		expect(output).toContain("Refund Requires Reconciliation");
+		expect(output).toContain("Charge has already been refunded.");
+		expect(output).toContain("refund_processing");
+		expect(output).toContain("Do not initiate another refund");
+
+		// The order must remain locked.
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		// No refund details should be recorded from a failed API response.
+		expect(storedOrder).not.toHaveProperty("stripeRefundId");
+		expect(storedOrder).not.toHaveProperty("refundStatus");
+		expect(storedOrder).not.toHaveProperty("refundedAt");
+
+		// Verify that only one refund request was submitted.
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests[0].method).toBe("GET");
+		expect(requests[1].method).toBe("POST");
+
+		expect(requests[1].url).toBe("https://api.stripe.com/v1/refunds");
+
+		expect(requests[1].headers).toMatchObject({
+			"idempotency-key": `emdash-refund-${orderId}`,
+		});
+	});
+
 	it("keeps an order locked when Stripe returns multiple refunds", async () => {
 		host = await createPluginRuntimeTestHost();
 
