@@ -277,6 +277,146 @@ describe("createCheckoutSession route", () => {
 		});
 	});
 
+	it("does not change a refunded order back to paid during checkout verification", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_refunded123";
+		const now = new Date().toISOString();
+
+		await host.fixtures.plugin.storage("orders", sessionId, {
+			id: sessionId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refunded",
+			customerEmail: null,
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+			stripeRefundId: "re_test_123",
+			refundStatus: "succeeded",
+			refundedAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_status: "paid",
+				client_reference_id: "product_test_123",
+			}),
+			{
+				status: 200,
+				headers: {
+				"Content-Type": "application/json",
+				},
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+			sessionId,
+			productId: "product_test_123",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId,
+			paid: true,
+			paymentStatus: "paid",
+		});
+
+		const storedOrder = await host.inspect.storage.get(
+			"orders",
+			sessionId,
+		);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refunded",
+			stripeRefundId: "re_test_123",
+			refundStatus: "succeeded",
+			refundedAt: now,
+		});
+	});
+
+	it("does not change a pending refund back to paid during checkout verification", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const sessionId = "cs_test_refund_pending123";
+		const now = new Date().toISOString();
+
+		await host.fixtures.plugin.storage("orders", sessionId, {
+			id: sessionId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_pending",
+			customerEmail: null,
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+			stripeRefundId: "re_test_123",
+			refundStatus: "pending",
+			refundedAt: null,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_status: "paid",
+				client_reference_id: "product_test_123",
+			}),
+			{
+				status: 200,
+				headers: {
+				"Content-Type": "application/json",
+				},
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute(
+			"verifyCheckoutSession",
+			{
+			sessionId,
+			productId: "product_test_123",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId,
+			paid: true,
+			paymentStatus: "paid",
+		});
+
+		const storedOrder = await host.inspect.storage.get(
+			"orders",
+			sessionId,
+		);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_pending",
+			stripeRefundId: "re_test_123",
+			refundStatus: "pending",
+			refundedAt: null,
+		});
+	});
+
 	it("rejects a Checkout session for a different product", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -1050,6 +1190,679 @@ describe("admin route", () => {
 			"The requested order could not be found."
 		);
 		expect(output).toContain("Back to Orders");
+	});
+
+	it("keeps an order locked when Stripe returns multiple refunds", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_multiple_refunds_123";
+		const sessionId = "cs_test_multiple_refunds_123";
+		const paymentIntentId = "pi_test_multiple_refunds_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+					{
+						id: "re_test_first_123",
+						object: "refund",
+						payment_intent: paymentIntentId,
+						status: "succeeded",
+						amount: 1000,
+						currency: "usd",
+					},
+					{
+						id: "re_test_second_123",
+						object: "refund",
+						payment_intent: paymentIntentId,
+						status: "pending",
+						amount: 1500,
+						currency: "usd",
+					},
+				],
+				has_more: false,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Manual Reconciliation Required");
+		expect(output).toContain("multiple refunds");
+		expect(output).toContain("The order remains locked");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+	
+	it("requires manual reconciliation when Stripe has more refund pages", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_refund_paginated_123";
+		const sessionId = "cs_test_refund_paginated_123";
+		const paymentIntentId = "pi_test_refund_paginated_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+					{
+						id: "re_test_paginated_123",
+						object: "refund",
+						payment_intent: paymentIntentId,
+						status: "pending",
+						amount: 2500,
+						currency: "usd",
+					},
+				],
+				has_more: true,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Manual Reconciliation Required");
+		expect(output).toContain("additional pages of refunds");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+	
+	it("keeps an order locked when Stripe reconciliation fails", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_refund_error_123";
+		const sessionId = "cs_test_refund_error_123";
+		const paymentIntentId = "pi_test_refund_error_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				error: {
+				message: "Stripe API temporarily unavailable",
+				},
+			}),
+			{
+				status: 503,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Reconciliation Check Failed");
+		expect(output).toContain("The order remains locked");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+	
+	it("reconciles an existing successful full refund", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_refund_found_123";
+		const sessionId = "cs_test_refund_found_123";
+		const paymentIntentId = "pi_test_refund_found_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+				{
+					id: "re_test_existing_123",
+					object: "refund",
+					payment_intent: paymentIntentId,
+					status: "succeeded",
+					amount: 2500,
+					currency: "usd",
+				},
+				],
+				has_more: false,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Stripe Refunds Found");
+		expect(output).toContain("re_test_existing_123");
+		expect(output).toContain("succeeded");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refunded",
+			stripeRefundId: "re_test_existing_123",
+			refundStatus: "succeeded",
+		});
+
+		expect(storedOrder).toHaveProperty("refundedAt", expect.any(String));
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+
+	it("reconciles an existing pending full refund", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_refund_found_123";
+		const sessionId = "cs_test_refund_found_123";
+		const paymentIntentId = "pi_test_refund_found_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+				{
+					id: "re_test_existing_123",
+					object: "refund",
+					payment_intent: paymentIntentId,
+					status: "pending",
+					amount: 2500,
+					currency: "usd",
+				},
+				],
+				has_more: false,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Stripe Refunds Found");
+		expect(output).toContain("re_test_existing_123");
+		expect(output).toContain("pending");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_pending",
+			stripeRefundId: "re_test_existing_123",
+			refundStatus: "pending",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+
+	it("keeps an order locked when Stripe returns a failed refund", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_refund_found_123";
+		const sessionId = "cs_test_refund_found_123";
+		const paymentIntentId = "pi_test_refund_found_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+				{
+					id: "re_test_existing_123",
+					object: "refund",
+					payment_intent: paymentIntentId,
+					status: "failed",
+					amount: 2500,
+					currency: "usd",
+				},
+				],
+				has_more: false,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Manual Reconciliation Required");
+		expect(output).toContain("re_test_existing_123");
+		expect(output).toContain("failed");
+		expect(output).toContain("The order remains locked");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		expect(storedOrder).not.toHaveProperty("stripeRefundId");
+		expect(storedOrder).not.toHaveProperty("refundStatus");
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+
+	it("keeps an order locked when Stripe returns a partial refund", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		const orderId = "order_partial_refund_123";
+		const sessionId = "cs_test_partial_refund_123";
+		const paymentIntentId = "pi_test_partial_refund_123";
+		const now = "2026-10-15T12:00:00.000Z";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: sessionId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+			new Response(
+			JSON.stringify({
+				id: sessionId,
+				payment_intent: paymentIntentId,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(
+			JSON.stringify({
+				object: "list",
+				data: [
+				{
+					id: "re_test_partial_123",
+					object: "refund",
+					payment_intent: paymentIntentId,
+					status: "succeeded",
+					amount: 1000,
+					currency: "usd",
+				},
+				],
+				has_more: false,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+			),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Manual Reconciliation Required");
+		expect(output).toContain("does not match the original order");
+		expect(output).toContain("The order remains locked");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+	});
+	
+	it("keeps an uncertain refund locked when Stripe reports no refunds", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const orderId = "cs_test_reconcile_empty";
+		const now = "2026-10-15T12:00:00.000Z";
+		const paymentIntentId = "pi_test_reconcile_empty";
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: orderId,
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "refund_processing",
+			customerEmail: "customer@example.com",
+			createdAt: now,
+			updatedAt: now,
+			paidAt: now,
+		});
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/checkout/sessions/${orderId}`,
+			new Response(JSON.stringify({
+				id: orderId,
+				payment_intent: paymentIntentId,
+			}), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		await host.http.respond(
+			`https://api.stripe.com/v1/refunds?payment_intent=${paymentIntentId}&limit=100`,
+			new Response(JSON.stringify({
+				object: "list",
+				data: [],
+				has_more: false,
+			}), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-refund-reconcile",
+			value: orderId,
+		});
+
+		expect(JSON.stringify(result)).toContain("No Stripe Refund Found");
+
+		const storedOrder = await host.inspect.storage.get("orders", orderId);
+		expect(storedOrder).toMatchObject({
+			paymentStatus: "refund_processing",
+		});
+
+		const requests = host.http.requests();
+		expect(requests).toHaveLength(2);
+		expect(requests.every((request) => request.method === "GET")).toBe(true);
+		expect(requests.some((request) => request.url === "https://api.stripe.com/v1/refunds" && request.method === "POST")).toBe(false);
 	});
 
 	it("returns to the Orders dashboard", async () => {

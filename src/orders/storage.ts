@@ -86,3 +86,183 @@ export async function listOrders(
     hasMore: result.hasMore,
   };
 }
+
+/**
+ * Record a successful Stripe refund, retrying if another request
+ * changes the order between reading and writing.
+ *
+ * This function does not contact Stripe or create refunds.
+ */
+export async function recordSuccessfulRefund(
+  ctx: PluginContext,
+  orderId: string,
+  stripeRefundId: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await ctx.storage.orders.getVersioned(orderId);
+
+    if (!current) {
+      return false;
+    }
+
+    const order = current.value as Order;
+
+    // Never replace an existing Stripe refund with a different refund.
+    if (
+      order.stripeRefundId &&
+      order.stripeRefundId !== stripeRefundId
+    ) {
+      return false;
+    }
+
+    if (order.paymentStatus === "refunded") {
+      return order.stripeRefundId === stripeRefundId;
+    }
+
+    if (
+      order.paymentStatus !== "paid" &&
+      order.paymentStatus !== "refund_processing" &&
+      !(
+        order.paymentStatus === "refund_pending" &&
+        order.stripeRefundId === stripeRefundId
+      )
+    ) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+
+    const updatedOrder: Order = {
+      ...order,
+      paymentStatus: "refunded",
+      stripeRefundId,
+      refundStatus: "succeeded",
+      refundedAt: now,
+      updatedAt: now,
+    };
+
+    const result = await ctx.storage.orders.compareAndSet(
+      orderId,
+      current.revision,
+      updatedOrder,
+    );
+
+    if (result.applied) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Record a refund that Stripe has accepted but not yet completed.
+ * Uses optimistic concurrency control to avoid overwriting changes.
+ */
+export async function recordPendingRefund(
+  ctx: PluginContext,
+  orderId: string,
+  stripeRefundId: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await ctx.storage.orders.getVersioned(orderId);
+
+    if (!current) {
+      return false;
+    }
+
+    const order = current.value as Order;
+
+    // Never replace an existing Stripe refund with a different refund.
+    if (
+      order.stripeRefundId &&
+      order.stripeRefundId !== stripeRefundId
+    ) {
+      return false;
+    }
+
+    // Never overwrite a completed refund.
+    if (order.paymentStatus === "refunded") {
+      return order.stripeRefundId === stripeRefundId;
+    }
+
+    // Recognize a previously recorded pending refund.
+    if (order.paymentStatus === "refund_pending") {
+      return order.stripeRefundId === stripeRefundId;
+    }
+
+    if (
+      order.paymentStatus !== "paid" &&
+      order.paymentStatus !== "refund_processing"
+    ) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+
+    const updatedOrder: Order = {
+      ...order,
+      paymentStatus: "refund_pending",
+      stripeRefundId,
+      refundStatus: "pending",
+      updatedAt: now,
+    };
+
+    const result = await ctx.storage.orders.compareAndSet(
+      orderId,
+      current.revision,
+      updatedOrder,
+    );
+
+    if (result.applied) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Atomically claim a paid order for refund processing.
+ *
+ * Only one request can successfully claim an order.
+ * Returns false if the order is no longer eligible.
+ */
+export async function claimOrderForRefund(
+  ctx: PluginContext,
+  orderId: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await ctx.storage.orders.getVersioned(orderId);
+
+    if (!current) {
+      return false;
+    }
+
+    const order = current.value as Order;
+
+    if (order.paymentStatus !== "paid") {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+
+    const updatedOrder: Order = {
+      ...order,
+      paymentStatus: "refund_processing",
+      updatedAt: now,
+    };
+
+    const result = await ctx.storage.orders.compareAndSet(
+      orderId,
+      current.revision,
+      updatedOrder,
+    );
+
+    if (result.applied) {
+      return true;
+    }
+  }
+
+  return false;
+}
