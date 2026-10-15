@@ -356,7 +356,6 @@ async function buildRefundConfirmationPage(
 		}),
 		elements.button("stripe-refund-confirm", "Confirm Full Refund", {
 			value: order.id,
-			style: "danger",
 		}),
 	]),
     ],
