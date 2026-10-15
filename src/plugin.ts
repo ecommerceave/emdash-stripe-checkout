@@ -1212,7 +1212,7 @@ const plugin: SandboxedPlugin = {
 								orderId: order.id,
 								paymentStatus: order.paymentStatus,
 							});
-							if (order.paymentStatus !== "paid") {
+							if (order.paymentStatus === "pending") {
 								if (
 									session.client_reference_id !== order.productId ||
 									session.id !== order.stripeSessionId
