@@ -1000,6 +1000,73 @@ describe("admin route", () => {
 		);
 	});
 
+	it("displays details for a selected order", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const orderId = "order_test_12345678";
+
+		await host.fixtures.plugin.storage("orders", orderId, {
+			id: orderId,
+			stripeSessionId: "cs_test_order_123",
+			productId: "product_test_123",
+			quantity: 1,
+			amountTotal: 2500,
+			currency: "usd",
+			paymentStatus: "paid",
+			customerEmail: "customer@example.com",
+			createdAt: "2026-10-15T12:00:00.000Z",
+			updatedAt: "2026-10-15T12:00:00.000Z",
+			paidAt: "2026-10-15T12:00:00.000Z",
+		});
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-order-details",
+			value: orderId,
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("customer@example.com");
+		expect(output).toContain("25.00 USD");
+		expect(output).toContain("cs_test_order_123");
+		expect(output).toContain("paid");
+		expect(output).toContain("Back to Orders");
+	});
+
+	it("handles an order that does not exist", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-order-details",
+			value: "order_does_not_exist",
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Order Not Found");
+		expect(output).toContain(
+			"The requested order could not be found."
+		);
+		expect(output).toContain("Back to Orders");
+	});
+
+	it("returns to the Orders dashboard", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		const result = await host.transport.invokeRoute("admin", {
+			type: "block_action",
+			action_id: "stripe-orders-back",
+		});
+
+		const output = JSON.stringify(result);
+
+		expect(output).toContain("Orders");
+		expect(output).toContain(
+			"Stripe Checkout requires a Products collection."
+		);
+	});
 });
 
 describe("testStripeConnection route", () => {
