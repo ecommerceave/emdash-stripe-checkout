@@ -2012,6 +2012,80 @@ describe("admin route", () => {
 		expect(requests.every((request) => request.method === "GET")).toBe(true);
 	});
 
+	it("updates a pending refund when Stripe confirms it succeeded", async () => {
+        host = await createPluginRuntimeTestHost();
+
+        await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+        const orderId = "cs_test_pending_refund_123";
+        const refundId = "re_test_pending_refund_123";
+        const now = "2026-10-15T12:00:00.000Z";
+
+        await host.fixtures.plugin.storage("orders", orderId, {
+                id: orderId,
+                stripeSessionId: orderId,
+                productId: "product_test_123",
+                quantity: 1,
+                amountTotal: 2500,
+                currency: "usd",
+                paymentStatus: "refund_pending",
+                stripeRefundId: refundId,
+                refundStatus: "pending",
+                customerEmail: "customer@example.com",
+                createdAt: now,
+                updatedAt: now,
+                paidAt: now,
+        });
+
+        await host.http.respond(
+                `https://api.stripe.com/v1/refunds/${refundId}`,
+                new Response(
+                        JSON.stringify({
+                                id: refundId,
+                                object: "refund",
+                                status: "succeeded",
+                                amount: 2500,
+                                currency: "usd",
+                        }),
+                        {
+                                status: 200,
+                                headers: { "Content-Type": "application/json" },
+                        },
+                ),
+        );
+
+        const result = await host.transport.invokeRoute("admin", {
+                type: "block_action",
+                action_id: "stripe-refund-check-status",
+                value: orderId,
+        });
+
+        expect(JSON.stringify(result)).toContain(
+                "Refund confirmed and order updated."
+        );
+
+        const storedOrder = await host.inspect.storage.get("orders", orderId);
+
+        expect(storedOrder).toMatchObject({
+                paymentStatus: "refunded",
+                stripeRefundId: refundId,
+                refundStatus: "succeeded",
+        });
+
+        expect(storedOrder).toHaveProperty(
+                "refundedAt",
+                expect.any(String),
+        );
+
+        const requests = host.http.requests();
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0].method).toBe("GET");
+        expect(requests[0].url).toBe(
+                `https://api.stripe.com/v1/refunds/${refundId}`
+        );
+});
+
 	it("keeps an order locked when Stripe returns a failed refund", async () => {
 		host = await createPluginRuntimeTestHost();
 
