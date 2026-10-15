@@ -211,6 +211,52 @@ function getProductSchemaGuidance(
 	].join("\n");
 }
 
+async function buildOrderDetailsPage(
+  ctx: PluginContext,
+  orderId: string,
+): Promise<BlockResponse> {
+  const order = await getOrder(ctx, orderId);
+
+  if (!order) {
+    return {
+      blocks: [
+        blocks.header("Order Not Found"),
+        blocks.section("The requested order could not be found."),
+        blocks.actions([
+          elements.button("stripe-orders-back", "Back to Orders"),
+        ]),
+      ],
+    };
+  }
+
+  return {
+    blocks: [
+      blocks.header(`Order #${order.id.slice(-8).toUpperCase()}`),
+      blocks.fields([
+        { label: "Order ID", value: order.id },
+        { label: "Stripe Session ID", value: order.stripeSessionId },
+        { label: "Customer Email", value: order.customerEmail ?? "Not provided" },
+        { label: "Product ID", value: order.productId },
+        { label: "Quantity", value: String(order.quantity) },
+        {
+          label: "Amount",
+          value:
+            order.amountTotal != null && order.currency
+              ? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
+              : "Unavailable",
+        },
+        { label: "Payment Status", value: order.paymentStatus },
+        { label: "Created", value: order.createdAt },
+        { label: "Updated", value: order.updatedAt },
+        { label: "Paid At", value: order.paidAt ?? "Not paid" },
+      ]),
+      blocks.actions([
+        elements.button("stripe-orders-back", "Back to Orders"),
+      ]),
+    ],
+  };
+}
+
 async function buildAdminPage(
   ctx: PluginContext,
   stripeConnection?: StripeConnectionResult,
@@ -336,6 +382,7 @@ async function buildAdminPage(
 					{ key: "amount", label: "Amount", format: "text" },
 					{ key: "status", label: "Status", format: "badge" },
 					{ key: "date", label: "Date", format: "text" },
+					{ key: "actions", label: "Actions", format: "element" },
 				],
 				rows: orders.map((order) => ({
 					order: `#${order.id.slice(-8).toUpperCase()}`,
@@ -352,6 +399,14 @@ async function buildAdminPage(
 						timeStyle: "short",
 						timeZone: "UTC",
 					}) + " UTC",
+					actions: elements.button(
+						"stripe-order-details",
+						"View Details",
+						{
+							style: "secondary",
+							value: order.id,
+						},
+					),
 				})),
 				nextCursor: hasMore ? nextCursor : undefined,
 				pageActionId: "stripe-orders-next-page",
@@ -739,57 +794,91 @@ const plugin: SandboxedPlugin = {
 
     routes: {
 		admin: pluginRoute({
-			methods: ["POST"],
-			request: {
-				body: "json",
-			},
-			handler: async (routeCtx, ctx) => {
-				const interaction =
-					routeCtx.input as BlockInteraction;
+		methods: ["POST"],
+		request: {
+			body: "json",
+		},
+		handler: async (routeCtx, ctx) => {
+			const interaction = routeCtx.input as BlockInteraction;
 
-				if (
-					interaction.type === "block_action" &&
-					interaction.action_id === "test-stripe-connection"
-				) {
-					const stripeConnection =
-						await testStripeConnection(ctx);
+			// Test Stripe connection
+			if (
+			interaction.type === "block_action" &&
+			interaction.action_id === "test-stripe-connection"
+			) {
+			const stripeConnection = await testStripeConnection(ctx);
 
-						const response = await buildAdminPage(
-						ctx,
-						stripeConnection,
-						);
+			const response = await buildAdminPage(
+				ctx,
+				stripeConnection,
+			);
 
-						response.toast = {
-						message: stripeConnection.ok
-							? "Stripe connection verified successfully."
-							: stripeConnection.error ??
-							"Unable to connect to Stripe.",
-						type: stripeConnection.ok ? "success" : "error",
-						};
+			response.toast = {
+				message: stripeConnection.ok
+				? "Stripe connection verified successfully."
+				: stripeConnection.error ??
+					"Unable to connect to Stripe.",
+				type: stripeConnection.ok ? "success" : "error",
+			};
 
-						return response;
-				}
+			return response;
+			}
 
-				if (
-					interaction.type === "block_action" &&
-					interaction.action_id === "stripe-orders-next-page"
-					) {
-					const value = interaction.value;
+			// View individual order details
+			if (
+			interaction.type === "block_action" &&
+			interaction.action_id === "stripe-order-details"
+			) {
+			const orderId = interaction.value;
 
-					const cursor =
-						typeof value === "object" &&
-						value !== null &&
-						"cursor" in value &&
-						typeof value.cursor === "string"
-						? value.cursor
-						: undefined;
+			if (typeof orderId !== "string" || !orderId.trim()) {
+				return {
+				blocks: [
+					blocks.header("Invalid Order"),
+					blocks.section("No valid order ID was provided."),
+					blocks.actions([
+					elements.button(
+						"stripe-orders-back",
+						"Back to Orders",
+					),
+					]),
+				],
+				};
+			}
 
-					return await buildAdminPage(ctx, undefined, cursor);
-				}
-				
-				return await buildAdminPage(ctx);
-			},
-		}),
+			return await buildOrderDetailsPage(ctx, orderId);
+			}
+
+			// Return to Orders dashboard
+			if (
+			interaction.type === "block_action" &&
+			interaction.action_id === "stripe-orders-back"
+			) {
+			return await buildAdminPage(ctx);
+			}
+
+			// Orders pagination
+			if (
+			interaction.type === "block_action" &&
+			interaction.action_id === "stripe-orders-next-page"
+			) {
+			const value = interaction.value;
+
+			const cursor =
+				typeof value === "object" &&
+				value !== null &&
+				"cursor" in value &&
+				typeof value.cursor === "string"
+				? value.cursor
+				: undefined;
+
+			return await buildAdminPage(ctx, undefined, cursor);
+			}
+
+			// Default dashboard
+			return await buildAdminPage(ctx);
+		},
+	}),
 
 		checkProductSchema: pluginRoute({
 			methods: ["GET"],
@@ -1283,7 +1372,8 @@ const plugin: SandboxedPlugin = {
 				};
 			},
 		}),
-	},
+},
+
 };
 
 export default plugin;
