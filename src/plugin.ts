@@ -22,13 +22,9 @@ import { verifyStripeWebhookSignature } from "./stripe/webhooks.js";
 import { testStripeConnection } from "./stripe/connection.js";
 
 import { handleAdminInteraction } from "./admin/handler.js";
-import { createCheckoutSession } from "./checkout/handler.js";
-import type { StripeCheckoutSession } from "./checkout/handler.js";
+import { createCheckoutSession, verifyCheckoutSession } from "./checkout/handler.js";
 
-type VerifyCheckoutInput = {
-	sessionId: string;
-	productId: string;
-};
+
 
 
 
@@ -49,21 +45,7 @@ type StripeWebhookEvent = {
 
 
 
-function isVerifyCheckoutInput(value: unknown): value is VerifyCheckoutInput {
-	if (typeof value !== "object" || value === null) {
-		return false;
-	}
 
-	const data = value as Record<string, unknown>;
-
-	return (
-		typeof data.sessionId === "string" &&
-		data.sessionId.startsWith("cs_") &&
-		data.sessionId.trim().length > 3 &&
-		typeof data.productId === "string" &&
-		data.productId.trim().length > 0
-	);
-}
 
 const plugin: SandboxedPlugin = {
     hooks: {
@@ -300,114 +282,7 @@ const plugin: SandboxedPlugin = {
 			request: {
 				body: "json",
 			},
-			handler: async (routeCtx, ctx) => {
-				if (!isVerifyCheckoutInput(routeCtx.input)) {
-					return {
-						ok: false,
-						error: "Invalid Checkout Session.",
-					};
-				}
-
-				const stripeSecretKey =
-					await ctx.settings.get<string>("stripeSecretKey");
-
-				if (!stripeSecretKey) {
-					return {
-						ok: false,
-						error: "Stripe Secret Key has not been configured.",
-					};
-				}
-
-				if (!ctx.http) {
-					return {
-						ok: false,
-						error: "Network access is not available.",
-					};
-				}
-
-				const { sessionId, productId } = routeCtx.input;
-
-				const response = await ctx.http.fetch(
-					`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
-					{
-						method: "GET",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-						},
-					},
-				);
-
-				const stripeResponse =
-					(await response.json()) as StripeCheckoutSession;
-
-				if (!response.ok) {
-					ctx.log.error("Stripe Checkout session verification failed", {
-						status: response.status,
-						sessionId,
-						message: stripeResponse.error?.message,
-					});
-
-					return {
-						ok: false,
-						error: "Checkout Session could not be verified.",
-					};
-				}
-
-				if (stripeResponse.client_reference_id !== productId) {
-					ctx.log.warn("Stripe Checkout session product mismatch", {
-						sessionId,
-						expectedProductId: productId,
-					});
-
-					return {
-						ok: false,
-						error: "Checkout Session does not match this product.",
-					};
-				}
-
-				if (stripeResponse.payment_status === "paid") {
-					const order = await getOrder(ctx, sessionId);
-
-					if (!order) {
-						ctx.log.error("Paid Stripe Checkout Session has no matching order", {
-							sessionId,
-						});
-
-						return {
-							ok: false,
-							error: "Payment was confirmed, but the order was not found.",
-						};
-					}
-
-					if (order.productId !== productId) {
-						return {
-							ok: false,
-							error: "Order does not match this product.",
-						};
-					}
-
-					if (order.paymentStatus === "pending") {
-						const updated = await updateOrder(ctx, sessionId, {
-							paymentStatus: "paid",
-							paidAt: new Date().toISOString(),
-						});
-
-						if (!updated) {
-							return {
-								ok: false,
-								error: "Payment was confirmed, but the order could not be updated.",
-							};
-						}
-					}
-				}
-
-				return {
-					ok: true,
-					sessionId: stripeResponse.id,
-					paid: stripeResponse.payment_status === "paid",
-					paymentStatus: stripeResponse.payment_status,
-				};
-			},
+			handler: verifyCheckoutSession,
 		}),
 },
 
