@@ -144,7 +144,7 @@ export async function handleAdminInteraction(
 						],
 					};
 				}
-				
+
 				const refund = refunds.data[0];
 
 				if (
@@ -169,7 +169,7 @@ export async function handleAdminInteraction(
 						],
 					};
 				}
-				
+
 				if (refund.status === "succeeded") {
 					const recorded = await recordSuccessfulRefund(
 						ctx,
@@ -193,7 +193,7 @@ export async function handleAdminInteraction(
 						};
 					}
 				}
-				
+
 				if (refund.status === "pending") {
 					const recorded = await recordPendingRefund(
 						ctx,
@@ -236,7 +236,7 @@ export async function handleAdminInteraction(
 						],
 					};
 				}
-				
+
 				return {
 					blocks: [
 						blocks.header("Stripe Refunds Found"),
@@ -277,7 +277,7 @@ export async function handleAdminInteraction(
 				};
 			}
 			}
-			
+
 			// Check the status of an existing Stripe refund (read-only)
 			if (
 			interaction.type === "block_action" &&
@@ -382,7 +382,7 @@ export async function handleAdminInteraction(
 				};
 			}
 			}
-			
+
 			// Process a confirmed full refund
 			if (
 				interaction.type === "block_action" &&
@@ -530,7 +530,7 @@ export async function handleAdminInteraction(
 				};
 			}
 			}
-			
+
 			// Show refund confirmation screen
 			if (
 				interaction.type === "block_action" &&
@@ -552,7 +552,7 @@ export async function handleAdminInteraction(
 
 					return await buildRefundConfirmationPage(ctx, orderId);
 				}
-				
+
 				// View individual order details
 				if (
 					interaction.type === "block_action" &&

@@ -42,72 +42,72 @@ export async function buildOrderDetailsPage(
 
   return {
     blocks: [
-		blocks.header(`Order #${order.id.slice(-8).toUpperCase()}`),
-		blocks.fields([
-			{ label: "Order ID", value: order.id },
-			{ label: "Stripe Session ID", value: order.stripeSessionId },
-			{ label: "Customer Email", value: order.customerEmail ?? "Not provided" },
-			{ label: "Product ID", value: order.productId },
-			{ label: "Quantity", value: String(order.quantity) },
-			{
-			label: "Amount",
-			value:
-				order.amountTotal != null && order.currency
-				? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
-				: "Unavailable",
-			},
-			{ label: "Payment Status", value: order.paymentStatus },
-			{ label: "Created", value: order.createdAt },
-			{ label: "Updated", value: order.updatedAt },
-			{ label: "Paid At", value: order.paidAt ?? "Not paid" },
-			{
-				label: "Stripe Refund ID",
-				value: order.stripeRefundId ?? "Not refunded",
-			},
-			{
-				label: "Refund Status",
-				value: order.refundStatus ?? "Not refunded",
-			},
-			{
-				label: "Refunded At",
-				value: order.refundedAt ?? "Not refunded",
-			},
-		]),
-		blocks.actions([
-			elements.button("stripe-orders-back", "Back to Orders"),
+  blocks.header(`Order #${order.id.slice(-8).toUpperCase()}`),
+  blocks.fields([
+   { label: "Order ID", value: order.id },
+   { label: "Stripe Session ID", value: order.stripeSessionId },
+   { label: "Customer Email", value: order.customerEmail ?? "Not provided" },
+   { label: "Product ID", value: order.productId },
+   { label: "Quantity", value: String(order.quantity) },
+   {
+   label: "Amount",
+   value:
+    order.amountTotal != null && order.currency
+    ? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
+    : "Unavailable",
+   },
+   { label: "Payment Status", value: order.paymentStatus },
+   { label: "Created", value: order.createdAt },
+   { label: "Updated", value: order.updatedAt },
+   { label: "Paid At", value: order.paidAt ?? "Not paid" },
+   {
+    label: "Stripe Refund ID",
+    value: order.stripeRefundId ?? "Not refunded",
+   },
+   {
+    label: "Refund Status",
+    value: order.refundStatus ?? "Not refunded",
+   },
+   {
+    label: "Refunded At",
+    value: order.refundedAt ?? "Not refunded",
+   },
+  ]),
+  blocks.actions([
+   elements.button("stripe-orders-back", "Back to Orders"),
 
-			...(order.paymentStatus === "paid"
-				? [
-					elements.button(
-					"stripe-order-refund",
-					"Refund Order",
-					{ value: order.id },
-					),
-				]
-				: []),
+   ...(order.paymentStatus === "paid"
+    ? [
+     elements.button(
+     "stripe-order-refund",
+     "Refund Order",
+     { value: order.id },
+     ),
+    ]
+    : []),
 
-			...(order.paymentStatus === "refund_pending" && order.stripeRefundId
-				? [
-					elements.button(
-					"stripe-refund-check-status",
-					"Check Refund Status",
-					{ value: order.id },
-					),
-				]
-				: []),
+   ...(order.paymentStatus === "refund_pending" && order.stripeRefundId
+    ? [
+     elements.button(
+     "stripe-refund-check-status",
+     "Check Refund Status",
+     { value: order.id },
+     ),
+    ]
+    : []),
 
-			...(order.paymentStatus === "refund_processing"
-				? [
-					elements.button(
-					"stripe-refund-reconcile",
-					"Check Stripe Refunds",
-					{ value: order.id },
-					),
-				]
-				: []),
-			]),
-    	],
-  	};
+   ...(order.paymentStatus === "refund_processing"
+    ? [
+     elements.button(
+     "stripe-refund-reconcile",
+     "Check Stripe Refunds",
+     { value: order.id },
+     ),
+    ]
+    : []),
+   ]),
+   ],
+ };
 }
 
 export async function buildRefundConfirmationPage(
@@ -152,13 +152,13 @@ export async function buildRefundConfirmationPage(
         { label: "Payment Status", value: order.paymentStatus },
       ]),
       blocks.actions([
-		elements.button("stripe-order-details", "Cancel", {
-			value: order.id,
-		}),
-		elements.button("stripe-refund-confirm", "Confirm Full Refund", {
-			value: order.id,
-		}),
-	]),
+  elements.button("stripe-order-details", "Cancel", {
+   value: order.id,
+  }),
+  elements.button("stripe-refund-confirm", "Confirm Full Refund", {
+   value: order.id,
+  }),
+ ]),
     ],
   };
 }
@@ -171,7 +171,7 @@ export async function buildAdminPage(
   const schema = await checkProductSchema(ctx);
   const { orders, cursor: nextCursor, hasMore } =
     await listOrders(ctx, ordersCursor);
-  
+
   const stripeSecretKey =
     await ctx.settings.get<string>("stripeSecretKey");
     const savedConnection =
