@@ -2,6 +2,8 @@ export type OrderPaymentStatus =
   | "pending"
   | "paid"
   | "failed"
+  | "refund_processing"
+  | "refund_pending"
   | "refunded";
 
 export type Order = {
@@ -19,4 +21,8 @@ export type Order = {
   createdAt: string;
   updatedAt: string;
   paidAt: string | null;
+  
+  stripeRefundId?: string | null;
+  refundStatus?: string | null;
+  refundedAt?: string | null;
 };
