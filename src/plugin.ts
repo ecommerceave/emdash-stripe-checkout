@@ -1,8 +1,7 @@
 import {
-	pluginRoute,
-	pluginResponse,
-	type PluginContext,
-	type SandboxedPlugin,
+    pluginRoute,
+    pluginResponse,
+    type SandboxedPlugin,
 } from "emdash/plugin";
 
 import {
@@ -25,6 +24,8 @@ import type { Order } from "./orders/types.js";
 import { checkProductSchema } from "./products/schema.js";
 
 import { verifyStripeWebhookSignature } from "./stripe/webhooks.js";
+
+import { testStripeConnection } from "./stripe/connection.js";
 
 import {
 	getStripePaymentIntent,
@@ -76,15 +77,6 @@ type StripeWebhookEvent = {
     };
 };
 
-type StripeConnectionResult = {
-	ok: boolean;
-	mode?: "test" | "live";
-	accountId?: string;
-	error?: string;
-};
-
-const STRIPE_CONNECTION_STATE_KEY = "state:stripe-connection";
-
 type StripeProductState = {
     stripeProductId?: string;
     stripePriceId?: string;
@@ -126,75 +118,6 @@ function isVerifyCheckoutInput(value: unknown): value is VerifyCheckoutInput {
 		typeof data.productId === "string" &&
 		data.productId.trim().length > 0
 	);
-}
-
-async function testStripeConnection(
-	ctx: PluginContext,
-): Promise<StripeConnectionResult> {
-	const stripeSecretKey =
-		await ctx.settings.get<string>("stripeSecretKey");
-
-	if (!stripeSecretKey) {
-		await ctx.kv.delete(STRIPE_CONNECTION_STATE_KEY);
-
-		return {
-			ok: false,
-			error: "Stripe Secret Key is not configured.",
-		};
-	}
-
-	if (!ctx.http) {
-		return {
-			ok: false,
-			error: "Network access is not available.",
-		};
-	}
-
-	const response = await ctx.http.fetch(
-		"https://api.stripe.com/v1/account",
-		{
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${stripeSecretKey}`,
-			},
-		},
-	);
-
-	const data = (await response.json()) as {
-		id?: string;
-		error?: {
-		message?: string;
-		};
-	};
-
-	if (!response.ok) {
-		await ctx.kv.delete(STRIPE_CONNECTION_STATE_KEY);
-
-		return {
-			ok: false,
-			error:
-			data.error?.message ??
-			"Unable to connect to Stripe.",
-		};
-	}
-
-	const mode = stripeSecretKey.startsWith("sk_test_")
-		? "test"
-		: "live";
-
-		if (data.id) {
-			await ctx.kv.set(STRIPE_CONNECTION_STATE_KEY, {
-				mode,
-				accountId: data.id,
-				verifiedAt: new Date().toISOString(),
-			});
-		}
-
-		return {
-			ok: true,
-			mode,
-			accountId: data.id,
-	};
 }
 
 const plugin: SandboxedPlugin = {

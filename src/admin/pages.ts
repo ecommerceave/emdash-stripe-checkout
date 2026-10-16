@@ -16,20 +16,11 @@ import {
     getProductSchemaGuidance,
 } from "../products/schema.js";
 
-export type StripeConnectionResult = {
-    ok: boolean;
-    mode?: "test" | "live";
-    accountId?: string;
-    error?: string;
-};
-
-type StripeConnectionState = {
-    mode: "test" | "live";
-    accountId: string;
-    verifiedAt: string;
-};
-
-const STRIPE_CONNECTION_STATE_KEY = "state:stripe-connection";
+import {
+    STRIPE_CONNECTION_STATE_KEY,
+    type StripeConnectionResult,
+    type StripeConnectionState,
+} from "../stripe/connection.js";
 
 export async function buildOrderDetailsPage(
   ctx: PluginContext,
