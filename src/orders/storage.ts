@@ -1,5 +1,5 @@
 import type { PluginContext } from "emdash/plugin";
-import type { Order } from "./types.js";
+import type { Order, OrderRefund } from "./types.js";
 
 /**
  * Create an order only if it does not already exist.
@@ -223,16 +223,90 @@ export async function recordPendingRefund(
 }
 
 /**
- * Atomically claim a paid order for refund processing.
- *
- * Only one request can successfully claim an order.
- * Returns false if the order is no longer eligible.
+ * Associate a Stripe PaymentIntent with an EmDash order.
+ * Atomically prevents association with a different order.
  */
-export async function claimOrderForRefund(
+export async function savePaymentIntentOrderLookup(
+  ctx: PluginContext,
+  paymentIntentId: string,
+  orderId: string,
+): Promise<void> {
+  if (!paymentIntentId.startsWith("pi_")) {
+    throw new Error("Invalid Stripe PaymentIntent ID.");
+  }
+
+  const key = `stripe:payment-intent:${paymentIntentId}`;
+
+  // Atomically create the lookup only if it does not exist.
+  const result = await ctx.kv.compareAndSet(
+    key,
+    null,
+    orderId,
+  );
+
+  if (result.applied) {
+    return;
+  }
+
+  // If another request already created the same association,
+  // that's fine. A different association is an error.
+  const existingOrderId = await ctx.kv.get<string>(key);
+
+  if (existingOrderId === orderId) {
+    return;
+  }
+
+  throw new Error(
+    "Stripe PaymentIntent is already associated with another order.",
+  );
+}
+
+/**
+ * Find an EmDash order using its Stripe PaymentIntent ID.
+ */
+export async function getOrderByPaymentIntent(
+  ctx: PluginContext,
+  paymentIntentId: string,
+): Promise<Order | null> {
+  const orderId = await ctx.kv.get<string>(
+    `stripe:payment-intent:${paymentIntentId}`,
+  );
+
+  if (!orderId) {
+    return null;
+  }
+
+  const order = await getOrder(ctx, orderId);
+
+  // Verify the association before trusting the lookup.
+  if (order?.stripePaymentIntentId !== paymentIntentId) {
+    return null;
+  }
+
+  return order;
+}
+
+/**
+ * Record a refund reported by Stripe.
+ *
+ * This function never creates refunds in Stripe.
+ * It only updates the local order history.
+ */
+export async function recordStripeRefund(
   ctx: PluginContext,
   orderId: string,
+  refund: OrderRefund,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  if (
+    !refund.id.startsWith("re_") ||
+    !Number.isSafeInteger(refund.amount) ||
+    refund.amount <= 0 ||
+    !refund.currency
+  ) {
+    return false;
+  }
+
+  for (let attempt = 0; attempt < 5; attempt++) {
     const current = await ctx.storage.orders.getVersioned(orderId);
 
     if (!current) {
@@ -241,16 +315,88 @@ export async function claimOrderForRefund(
 
     const order = current.value as Order;
 
-    if (order.paymentStatus !== "paid") {
+    if (
+      order.amountTotal === null ||
+      order.amountTotal < 0 ||
+      !order.currency ||
+      order.currency.toLowerCase() !== refund.currency.toLowerCase() ||
+      order.paymentStatus === "pending" ||
+      order.paymentStatus === "failed"
+    ) {
       return false;
     }
+
+    const refunds = [...(order.refunds ?? [])];
+    const existingIndex = refunds.findIndex(
+      (item) => item.id === refund.id,
+    );
+
+    if (existingIndex >= 0) {
+    const existing = refunds[existingIndex];
+
+    // A Stripe refund's amount and currency should not change.
+    if (
+      existing.amount !== refund.amount ||
+      existing.currency.toLowerCase() !== refund.currency.toLowerCase()
+    ) {
+      return false;
+    }
+
+    // Ignore events older than the refund information already stored.
+    const incomingTime = Date.parse(refund.updatedAt);
+    const existingTime = Date.parse(existing.updatedAt);
+
+    if (
+      !Number.isFinite(incomingTime) ||
+      !Number.isFinite(existingTime)
+    ) {
+      return false;
+    }
+
+    if (incomingTime >= existingTime) {
+      refunds[existingIndex] = {
+        ...existing,
+        ...refund,
+      };
+    }
+  } else {
+    refunds.push(refund);
+  }
+
+    const refundedAmount = refunds
+      .filter((item) => item.status === "succeeded")
+      .reduce((total, item) => total + item.amount, 0);
+
+    // Never allow refund history to exceed the original payment.
+    if (refundedAmount > order.amountTotal) {
+      return false;
+    }
+
+    const hasPendingRefund = refunds.some(
+      (item) =>
+        item.status === "pending" ||
+        item.status === "requires_action",
+    );
+
+    const fullyRefunded = refundedAmount === order.amountTotal;
+
+    const paymentStatus: Order["paymentStatus"] = fullyRefunded
+      ? "refunded"
+      : hasPendingRefund
+        ? "refund_pending"
+        : "paid";
 
     const now = new Date().toISOString();
 
     const updatedOrder: Order = {
       ...order,
-      paymentStatus: "refund_processing",
+      refunds,
+      refundedAmount,
+      paymentStatus,
       updatedAt: now,
+      ...(fullyRefunded
+        ? { refundedAt: order.refundedAt ?? now }
+        : {}),
     };
 
     const result = await ctx.storage.orders.compareAndSet(

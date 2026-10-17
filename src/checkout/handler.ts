@@ -1,17 +1,28 @@
 import type { PluginContext } from "emdash/plugin";
 
 export type StripeCheckoutSession = {
-	id?: string;
-	url?: string;
-	payment_status?: string;
-	client_reference_id?: string;
-	amount_total?: number | null;
-	currency?: string | null;
-	error?: {
-	message?: string;
-	};
+    id?: string;
+    url?: string;
+    payment_status?: string;
+    payment_intent?: string | null;
+    client_reference_id?: string;
+    amount_total?: number | null;
+    currency?: string | null;
+    customer_details?: {
+        email?: string | null;
+    };
+    error?: {
+        message?: string;
+    };
 };
-import { createOrder, getOrder, updateOrder } from "../orders/storage.js";
+
+import {
+    createOrder,
+    getOrder,
+    updateOrder,
+    savePaymentIntentOrderLookup,
+} from "../orders/storage.js";
+
 import type { Order } from "../orders/types.js";
 import type { StripeProductState } from "../products/sync.js";
 
@@ -65,284 +76,367 @@ export async function createCheckoutSession(
     routeCtx: { input: unknown },
     ctx: PluginContext,
 ) {
-				if (!isCheckoutInput(routeCtx.input)) {
-					return {
-						ok: false,
-						error: "Invalid checkout request.",
-					};
-				}
+    if (!isCheckoutInput(routeCtx.input)) {
+        return {
+            ok: false,
+            error: "Invalid checkout request.",
+        };
+    }
 
-				const stripeSecretKey =
-					await ctx.settings.get<string>("stripeSecretKey");
+    const stripeSecretKey =
+        await ctx.settings.get<string>("stripeSecretKey");
 
-				if (!stripeSecretKey) {
-					return {
-						ok: false,
-						error: "Stripe Secret Key has not been configured.",
-					};
-				}
+    if (!stripeSecretKey) {
+        return {
+            ok: false,
+            error: "Stripe Secret Key has not been configured.",
+        };
+    }
 
-				const { productId, returnPath = "/" } = routeCtx.input;
+    const { productId, returnPath = "/" } = routeCtx.input;
 
-				const siteUrl = new URL(ctx.site.url);
-				const returnUrl = new URL(returnPath, siteUrl);
+    const siteUrl = new URL(ctx.site.url);
+    const returnUrl = new URL(returnPath, siteUrl);
 
-				if (returnUrl.origin !== siteUrl.origin) {
-					return {
-						ok: false,
-						error: "Invalid return path.",
-					};
-				}
+    if (returnUrl.origin !== siteUrl.origin) {
+        return {
+            ok: false,
+            error: "Invalid return path.",
+        };
+    }
 
-				returnUrl.searchParams.set("checkout", "success");
-				const successUrl =
-					`${returnUrl.toString()}&session_id={CHECKOUT_SESSION_ID}`;
+    returnUrl.searchParams.set("checkout", "success");
 
-				returnUrl.searchParams.set("checkout", "cancel");
-				const cancelUrl = returnUrl.toString();
+    const successUrl =
+        `${returnUrl.toString()}&session_id={CHECKOUT_SESSION_ID}`;
 
-				const stripeState = await ctx.kv.get<StripeProductState>(
-					`state:product:${productId}`,
-				);
+    returnUrl.searchParams.set("checkout", "cancel");
+    const cancelUrl = returnUrl.toString();
 
-				if (!stripeState?.stripePriceId) {
-					return {
-						ok: false,
-						error: "This product is not available for Stripe Checkout.",
-					};
-				}
+    const stripeState = await ctx.kv.get<StripeProductState>(
+        `state:product:${productId}`,
+    );
 
-				const product = await ctx.content?.get("products", productId);
+    if (!stripeState?.stripePriceId) {
+        return {
+            ok: false,
+            error: "This product is not available for Stripe Checkout.",
+        };
+    }
 
-				if (!product || (product.data?.active !== true && product.data?.active !== 1)) {
-					return {
-						ok: false,
-						error: "This product is currently unavailable for purchase.",
-					};
-				}
+    const product = await ctx.content?.get("products", productId);
 
-				const priceId = stripeState.stripePriceId;
+    if (
+        !product ||
+        (product.data?.active !== true && product.data?.active !== 1)
+    ) {
+        return {
+            ok: false,
+            error: "This product is currently unavailable for purchase.",
+        };
+    }
 
-				const body = new URLSearchParams();
+    // Capture the product name at the time of checkout.
+    const productName =
+        typeof product.data?.name === "string"
+            ? product.data.name.trim()
+            : "";
 
-				body.set("mode", "payment");
-				body.set("client_reference_id", productId);
-				body.set("line_items[0][price]", priceId);
-				body.set("line_items[0][quantity]", "1");
-				body.set("success_url", successUrl);
-				body.set("cancel_url", cancelUrl);
+    if (!productName) {
+        return {
+            ok: false,
+            error: "This product does not have a valid name.",
+        };
+    }
 
-				if (!ctx.http) {
-					return {
-						ok: false,
-						error: "Network access is not available.",
-					};
-				}
+    const priceId = stripeState.stripePriceId;
 
-				const response = await ctx.http.fetch(
-					"https://api.stripe.com/v1/checkout/sessions",
-					{
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-							"Content-Type": "application/x-www-form-urlencoded",
-						},
-						body: body.toString(),
-					},
-				);
+    const body = new URLSearchParams();
 
-				const stripeResponse =
-					(await response.json()) as StripeCheckoutSession;
+    body.set("mode", "payment");
+    body.set("client_reference_id", productId);
+    body.set("line_items[0][price]", priceId);
+    body.set("line_items[0][quantity]", "1");
+    body.set("success_url", successUrl);
+    body.set("cancel_url", cancelUrl);
 
-				if (!response.ok) {
-					ctx.log.error("Stripe Checkout session creation failed", {
-						status: response.status,
-						message: stripeResponse.error?.message,
-					});
+    if (!ctx.http) {
+        return {
+            ok: false,
+            error: "Network access is not available.",
+        };
+    }
 
-					return {
-						ok: false,
-						error:
-							stripeResponse.error?.message ??
-							"Stripe Checkout session could not be created.",
-					};
-				}
+    const response = await ctx.http.fetch(
+        "https://api.stripe.com/v1/checkout/sessions",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${stripeSecretKey}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: body.toString(),
+        },
+    );
 
-				if (!stripeResponse.url) {
-					return {
-						ok: false,
-						error: "Stripe did not return a Checkout URL.",
-					};
-				}
+    const stripeResponse =
+        (await response.json()) as StripeCheckoutSession;
 
-				if (!stripeResponse.id) {
-					return {
-						ok: false,
-						error: "Stripe did not return a Checkout Session ID.",
-					};
-				}
+    if (!response.ok) {
+        ctx.log.error("Stripe Checkout session creation failed", {
+            status: response.status,
+            message: stripeResponse.error?.message,
+        });
 
-				const now = new Date().toISOString();
+        return {
+            ok: false,
+            error:
+                stripeResponse.error?.message ??
+                "Stripe Checkout session could not be created.",
+        };
+    }
 
-				const order: Order = {
-				id: stripeResponse.id,
-				stripeSessionId: stripeResponse.id,
-				productId,
-				quantity: 1,
-				amountTotal: stripeResponse.amount_total ?? null,
-				currency: stripeResponse.currency ?? null,
-				paymentStatus: "pending",
-				customerEmail: null,
-				createdAt: now,
-				updatedAt: now,
-				paidAt: null,
-				};
+    if (!stripeResponse.url) {
+        return {
+            ok: false,
+            error: "Stripe did not return a Checkout URL.",
+        };
+    }
 
-				let orderCreated = false;
+    if (!stripeResponse.id) {
+        return {
+            ok: false,
+            error: "Stripe did not return a Checkout Session ID.",
+        };
+    }
 
-				try {
-					orderCreated = await createOrder(ctx, order);
-				} catch (error) {
-					ctx.log.error("Failed to save Stripe Checkout order", {
-						sessionId: stripeResponse.id,
-						message: error instanceof Error ? error.message : String(error),
-					});
+    const now = new Date().toISOString();
 
-					return {
-						ok: false,
-						error: "Checkout was created, but the order could not be saved. Please try again.",
-					};
-				}
+    const order: Order = {
+        id: stripeResponse.id,
+        stripeSessionId: stripeResponse.id,
+        productId,
+        productName,
+        quantity: 1,
+        amountTotal: stripeResponse.amount_total ?? null,
+        currency: stripeResponse.currency ?? null,
+        paymentStatus: "pending",
+        customerEmail: null,
+        createdAt: now,
+        updatedAt: now,
+        paidAt: null,
+    };
 
-				if (!orderCreated) {
-					return {
-						ok: false,
-						error: "An order already exists for this Checkout Session.",
-					};
-				}
+    let orderCreated = false;
 
-				ctx.log.info("Stripe Checkout session created", {
-					sessionId: stripeResponse.id,
-					priceId,
-				});
+    try {
+        orderCreated = await createOrder(ctx, order);
+    } catch (error) {
+        ctx.log.error("Failed to save Stripe Checkout order", {
+            sessionId: stripeResponse.id,
+            message:
+                error instanceof Error
+                    ? error.message
+                    : String(error),
+        });
 
-				return {
-					ok: true,
-					sessionId: stripeResponse.id,
-					checkoutUrl: stripeResponse.url,
-				};
+        return {
+            ok: false,
+            error:
+                "Checkout was created, but the order could not be saved. Please try again.",
+        };
+    }
 
+    if (!orderCreated) {
+        return {
+            ok: false,
+            error: "An order already exists for this Checkout Session.",
+        };
+    }
+
+    ctx.log.info("Stripe Checkout session created", {
+        sessionId: stripeResponse.id,
+        priceId,
+        productName,
+    });
+
+    return {
+        ok: true,
+        sessionId: stripeResponse.id,
+        checkoutUrl: stripeResponse.url,
+    };
 }
 
 export async function verifyCheckoutSession(
     routeCtx: { input: unknown },
     ctx: PluginContext,
 ) {
-				if (!isVerifyCheckoutInput(routeCtx.input)) {
-					return {
-						ok: false,
-						error: "Invalid Checkout Session.",
-					};
-				}
+    if (!isVerifyCheckoutInput(routeCtx.input)) {
+        return {
+            ok: false,
+            error: "Invalid Checkout Session.",
+        };
+    }
 
-				const stripeSecretKey =
-					await ctx.settings.get<string>("stripeSecretKey");
+    const stripeSecretKey =
+        await ctx.settings.get<string>("stripeSecretKey");
 
-				if (!stripeSecretKey) {
-					return {
-						ok: false,
-						error: "Stripe Secret Key has not been configured.",
-					};
-				}
+    if (!stripeSecretKey) {
+        return {
+            ok: false,
+            error: "Stripe Secret Key has not been configured.",
+        };
+    }
 
-				if (!ctx.http) {
-					return {
-						ok: false,
-						error: "Network access is not available.",
-					};
-				}
+    if (!ctx.http) {
+        return {
+            ok: false,
+            error: "Network access is not available.",
+        };
+    }
 
-				const { sessionId, productId } = routeCtx.input;
+    const { sessionId, productId } = routeCtx.input;
 
-				const response = await ctx.http.fetch(
-					`https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
-					{
-						method: "GET",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-						},
-					},
-				);
+    const response = await ctx.http.fetch(
+        `https://api.stripe.com/v1/checkout/sessions/${sessionId}`,
+        {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${stripeSecretKey}`,
+            },
+        },
+    );
 
-				const stripeResponse =
-					(await response.json()) as StripeCheckoutSession;
+    const stripeResponse =
+        (await response.json()) as StripeCheckoutSession;
 
-				if (!response.ok) {
-					ctx.log.error("Stripe Checkout session verification failed", {
-						status: response.status,
-						sessionId,
-						message: stripeResponse.error?.message,
-					});
+    if (!response.ok) {
+        ctx.log.error("Stripe Checkout session verification failed", {
+            status: response.status,
+            sessionId,
+            message: stripeResponse.error?.message,
+        });
 
-					return {
-						ok: false,
-						error: "Checkout Session could not be verified.",
-					};
-				}
+        return {
+            ok: false,
+            error: "Checkout Session could not be verified.",
+        };
+    }
 
-				if (stripeResponse.client_reference_id !== productId) {
-					ctx.log.warn("Stripe Checkout session product mismatch", {
-						sessionId,
-						expectedProductId: productId,
-					});
+    if (
+        stripeResponse.id !== sessionId ||
+        stripeResponse.client_reference_id !== productId
+    ) {
+        ctx.log.warn("Stripe Checkout session mismatch", {
+            sessionId,
+            expectedProductId: productId,
+        });
 
-					return {
-						ok: false,
-						error: "Checkout Session does not match this product.",
-					};
-				}
+        return {
+            ok: false,
+            error: "Checkout Session does not match this product.",
+        };
+    }
 
-				if (stripeResponse.payment_status === "paid") {
-					const order = await getOrder(ctx, sessionId);
+    if (stripeResponse.payment_status === "paid") {
+        const order = await getOrder(ctx, sessionId);
 
-					if (!order) {
-						ctx.log.error("Paid Stripe Checkout Session has no matching order", {
-							sessionId,
-						});
+        if (!order) {
+            ctx.log.error(
+                "Paid Stripe Checkout Session has no matching order",
+                { sessionId },
+            );
 
-						return {
-							ok: false,
-							error: "Payment was confirmed, but the order was not found.",
-						};
-					}
+            return {
+                ok: false,
+                error: "Payment was confirmed, but the order was not found.",
+            };
+        }
 
-					if (order.productId !== productId) {
-						return {
-							ok: false,
-							error: "Order does not match this product.",
-						};
-					}
+        if (
+            order.productId !== productId ||
+            order.stripeSessionId !== sessionId
+        ) {
+            return {
+                ok: false,
+                error: "Order does not match this Checkout Session.",
+            };
+        }
 
-					if (order.paymentStatus === "pending") {
-						const updated = await updateOrder(ctx, sessionId, {
-							paymentStatus: "paid",
-							paidAt: new Date().toISOString(),
-						});
+        // Stripe provides customer details after checkout is completed.
+        const customerEmail =
+            stripeResponse.customer_details?.email?.trim() || null;
 
-						if (!updated) {
-							return {
-								ok: false,
-								error: "Payment was confirmed, but the order could not be updated.",
-							};
-						}
-					}
-				}
+        // Only fill the email if the order does not already have one.
+        const shouldUpdateEmail =
+            !order.customerEmail && Boolean(customerEmail);
 
-				return {
-					ok: true,
-					sessionId: stripeResponse.id,
-					paid: stripeResponse.payment_status === "paid",
-					paymentStatus: stripeResponse.payment_status,
-				};
+        // Only transition an order from pending to paid.
+        // Never overwrite an existing refund or other payment status.
+        const shouldMarkPaid = order.paymentStatus === "pending";
 
+        // Save the PaymentIntent ID without overwriting an existing value.
+        const shouldSavePaymentIntent =
+            !order.stripePaymentIntentId &&
+            typeof stripeResponse.payment_intent === "string" &&
+            stripeResponse.payment_intent.startsWith("pi_");
+
+        if (shouldMarkPaid || shouldUpdateEmail || shouldSavePaymentIntent) {
+            const updates: Partial<Order> = {};
+
+            if (shouldSavePaymentIntent) {
+                updates.stripePaymentIntentId = stripeResponse.payment_intent;
+            }
+
+            if (shouldMarkPaid) {
+                updates.paymentStatus = "paid";
+                updates.paidAt = new Date().toISOString();
+            }
+
+            if (shouldUpdateEmail && customerEmail) {
+                updates.customerEmail = customerEmail;
+            }
+
+            const updated = await updateOrder(
+                ctx,
+                sessionId,
+                updates,
+            );
+
+            if (!updated) {
+                ctx.log.error(
+                    "Stripe Checkout order update failed",
+                    { sessionId },
+                );
+
+                return {
+                    ok: false,
+                    error: "Payment was confirmed, but the order could not be updated.",
+                };
+            }
+
+            if (shouldSavePaymentIntent && stripeResponse.payment_intent) {
+                await savePaymentIntentOrderLookup(
+                    ctx,
+                    stripeResponse.payment_intent,
+                    sessionId,
+                );
+            }
+            
+            ctx.log.info("Stripe Checkout order verified", {
+                orderId: order.id,
+                paymentStatus: shouldMarkPaid
+                    ? "paid"
+                    : order.paymentStatus,
+                customerEmailUpdated: shouldUpdateEmail,
+            });
+        }
+    }
+
+    return {
+        ok: true,
+        sessionId: stripeResponse.id,
+        paid: stripeResponse.payment_status === "paid",
+        paymentStatus: stripeResponse.payment_status,
+    };
 }

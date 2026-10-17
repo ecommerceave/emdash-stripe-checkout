@@ -5,7 +5,9 @@ import type { Order } from "../src/orders/types.js";
 import {
   recordPendingRefund,
   recordSuccessfulRefund,
-  claimOrderForRefund,
+  recordStripeRefund,
+  savePaymentIntentOrderLookup,
+  getOrderByPaymentIntent,
 } from "../src/orders/storage.js";
 
 const makeOrder = (): Order => ({
@@ -347,78 +349,378 @@ describe("recordPendingRefund", () => {
     });
 });
 
-describe("claimOrderForRefund", () => {
-  it("allows only one request to claim an order for refund processing", async () => {
-    let currentOrder = makeOrder();
-    let revision = 1;
+describe("PaymentIntent order lookup", () => {
+  it("saves and retrieves an order by its Stripe PaymentIntent ID", async () => {
+    const paymentIntentId = "pi_test_123";
+    const orderId = "cs_test_order_123";
 
-    const getVersioned = vi.fn().mockImplementation(async () => ({
-      value: { ...currentOrder },
-      revision: `rev-${revision}`,
-    }));
+    const order: Order = {
+      ...makeOrder(),
+      stripePaymentIntentId: paymentIntentId,
+    };
 
-    const compareAndSet = vi.fn().mockImplementation(
-      async (_orderId, expectedRevision, updatedOrder) => {
-        if (expectedRevision !== `rev-${revision}`) {
-          return { applied: false };
-        }
+    const kvCompareAndSet = vi.fn().mockResolvedValue({
+      applied: true,
+    });
+    const kvGet = vi.fn().mockResolvedValue(orderId);
+    const getOrder = vi.fn().mockResolvedValue(order);
 
-        currentOrder = { ...updatedOrder };
-        revision++;
-
-        return { applied: true };
+    const ctx = {
+      kv: {
+        compareAndSet: kvCompareAndSet,
+        get: kvGet,
       },
-    );
+      storage: {
+        orders: {
+          get: getOrder,
+        },
+      },
+    } as unknown as PluginContext;
 
-    const ctx = makeContext(getVersioned, compareAndSet);
-
-    const firstClaim = await claimOrderForRefund(
+    await savePaymentIntentOrderLookup(
       ctx,
-      "cs_test_order_123",
+      paymentIntentId,
+      orderId,
     );
 
-    const secondClaim = await claimOrderForRefund(
+    expect(kvCompareAndSet).toHaveBeenCalledWith(
+      `stripe:payment-intent:${paymentIntentId}`,
+      null,
+      orderId,
+    );
+
+    const result = await getOrderByPaymentIntent(
       ctx,
-      "cs_test_order_123",
+      paymentIntentId,
     );
 
-    expect(firstClaim).toBe(true);
-    expect(secondClaim).toBe(false);
-    expect(currentOrder.paymentStatus).toBe("refund_processing");
-    expect(compareAndSet).toHaveBeenCalledOnce();
+    expect(kvGet).toHaveBeenCalledWith(
+      `stripe:payment-intent:${paymentIntentId}`,
+    );
+
+    expect(getOrder).toHaveBeenCalledWith(orderId);
+    expect(result).toEqual(order);
   });
 
-  it("allows only one of two simultaneous refund claims", async () => {
-    let currentOrder = makeOrder();
-    let revision = 1;
+  it("rejects a lookup when the PaymentIntent ID does not match the order", async () => {
+    const order: Order = {
+      ...makeOrder(),
+      stripePaymentIntentId: "pi_different",
+    };
 
-    const getVersioned = vi.fn().mockImplementation(async () => ({
-      value: { ...currentOrder },
-      revision: `rev-${revision}`,
-    }));
-
-    const compareAndSet = vi.fn().mockImplementation(
-      async (_orderId, expectedRevision, updatedOrder) => {
-        if (expectedRevision !== `rev-${revision}`) {
-          return { applied: false };
-        }
-
-        currentOrder = { ...updatedOrder };
-        revision++;
-
-        return { applied: true };
+    const ctx = {
+      kv: {
+        get: vi.fn().mockResolvedValue("cs_test_order_123"),
       },
+      storage: {
+        orders: {
+          get: vi.fn().mockResolvedValue(order),
+        },
+      },
+    } as unknown as PluginContext;
+
+    const result = await getOrderByPaymentIntent(
+      ctx,
+      "pi_test_123",
     );
 
-    const ctx = makeContext(getVersioned, compareAndSet);
+    expect(result).toBeNull();
+  });
 
-    const results = await Promise.all([
-      claimOrderForRefund(ctx, "cs_test_order_123"),
-      claimOrderForRefund(ctx, "cs_test_order_123"),
-    ]);
+  it("rejects a PaymentIntent already associated with another order", async () => {
+    const paymentIntentId = "pi_test_123";
 
-    expect(results.filter(Boolean)).toHaveLength(1);
-    expect(currentOrder.paymentStatus).toBe("refund_processing");
-    expect(compareAndSet).toHaveBeenCalledTimes(2);
+    const kvCompareAndSet = vi.fn().mockResolvedValue({
+      applied: false,
+    });
+
+    const kvGet = vi.fn().mockResolvedValue("cs_existing_order");
+
+    const ctx = {
+      kv: {
+        compareAndSet: kvCompareAndSet,
+        get: kvGet,
+      },
+    } as unknown as PluginContext;
+
+    await expect(
+      savePaymentIntentOrderLookup(
+        ctx,
+        paymentIntentId,
+        "cs_different_order",
+      ),
+    ).rejects.toThrow(
+      "Stripe PaymentIntent is already associated with another order.",
+    );
+
+    expect(kvCompareAndSet).toHaveBeenCalledWith(
+      `stripe:payment-intent:${paymentIntentId}`,
+      null,
+      "cs_different_order",
+    );
+
+    expect(kvGet).toHaveBeenCalledOnce();
+  });
+
+  it("accepts an existing PaymentIntent association for the same order", async () => {
+    const paymentIntentId = "pi_test_123";
+    const orderId = "cs_existing_order";
+
+    const kvCompareAndSet = vi.fn().mockResolvedValue({
+      applied: false,
+    });
+
+    const kvGet = vi.fn().mockResolvedValue(orderId);
+
+    const ctx = {
+      kv: {
+        compareAndSet: kvCompareAndSet,
+        get: kvGet,
+      },
+    } as unknown as PluginContext;
+
+    await expect(
+      savePaymentIntentOrderLookup(ctx, paymentIntentId, orderId),
+    ).resolves.toBeUndefined();
+
+    expect(kvCompareAndSet).toHaveBeenCalledWith(
+      `stripe:payment-intent:${paymentIntentId}`,
+      null,
+      orderId,
+    );
+
+    expect(kvGet).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Stripe refund history", () => {
+  it("records a partial refund without marking the entire order as refunded", async () => {
+    const order = {
+      id: "cs_test_partial",
+      stripeSessionId: "cs_test_partial",
+      stripePaymentIntentId: "pi_test_partial",
+      productId: "product_test",
+      quantity: 1,
+      amountTotal: 10000,
+      currency: "usd",
+      paymentStatus: "paid",
+      customerEmail: null,
+      createdAt: "2026-10-16T12:00:00.000Z",
+      updatedAt: "2026-10-16T12:00:00.000Z",
+      paidAt: "2026-10-16T12:00:00.000Z",
+    };
+
+    const compareAndSet = vi.fn().mockResolvedValue({
+      applied: true,
+    });
+
+    const ctx = {
+      storage: {
+        orders: {
+          getVersioned: vi.fn().mockResolvedValue({
+            value: order,
+            revision: "revision_1",
+          }),
+          compareAndSet,
+        },
+      },
+    } as unknown as PluginContext;
+
+    const result = await recordStripeRefund(ctx, order.id, {
+      id: "re_test_partial",
+      amount: 2500,
+      currency: "usd",
+      status: "succeeded",
+      createdAt: "2026-10-16T12:30:00.000Z",
+      updatedAt: "2026-10-16T12:30:00.000Z",
+    });
+
+    expect(result).toBe(true);
+
+    const updatedOrder = compareAndSet.mock.calls[0][2];
+
+    expect(updatedOrder.paymentStatus).toBe("paid");
+    expect(updatedOrder.refundedAmount).toBe(2500);
+    expect(updatedOrder.refunds).toHaveLength(1);
+    expect(updatedOrder.refunds[0].id).toBe("re_test_partial");
+  });
+
+  it("combines multiple successful partial refunds", async () => {
+    const order = {
+      id: "cs_test_multiple",
+      stripeSessionId: "cs_test_multiple",
+      stripePaymentIntentId: "pi_test_multiple",
+      productId: "product_test",
+      quantity: 1,
+      amountTotal: 10000,
+      currency: "usd",
+      paymentStatus: "paid",
+      customerEmail: null,
+      createdAt: "2026-10-16T12:00:00.000Z",
+      updatedAt: "2026-10-16T12:00:00.000Z",
+      paidAt: "2026-10-16T12:00:00.000Z",
+      refunds: [
+        {
+          id: "re_first",
+          amount: 2500,
+          currency: "usd",
+          status: "succeeded",
+          createdAt: "2026-10-16T12:30:00.000Z",
+          updatedAt: "2026-10-16T12:30:00.000Z",
+        },
+      ],
+      refundedAmount: 2500,
+    };
+
+    const compareAndSet = vi.fn().mockResolvedValue({
+      applied: true,
+    });
+
+    const ctx = {
+      storage: {
+        orders: {
+          getVersioned: vi.fn().mockResolvedValue({
+            value: order,
+            revision: "revision_1",
+          }),
+          compareAndSet,
+        },
+      },
+    } as unknown as PluginContext;
+
+    const result = await recordStripeRefund(ctx, order.id, {
+      id: "re_second",
+      amount: 1500,
+      currency: "usd",
+      status: "succeeded",
+      createdAt: "2026-10-16T13:00:00.000Z",
+      updatedAt: "2026-10-16T13:00:00.000Z",
+    });
+
+    expect(result).toBe(true);
+
+    const updatedOrder = compareAndSet.mock.calls[0][2];
+
+    expect(updatedOrder.paymentStatus).toBe("paid");
+    expect(updatedOrder.refundedAmount).toBe(4000);
+    expect(updatedOrder.refunds).toHaveLength(2);
+    expect(updatedOrder.refunds.map((refund: { id: string }) => refund.id))
+      .toEqual(["re_first", "re_second"]);
+  });
+
+  it("does not double-count a refund received more than once", async () => {
+    const refund = {
+      id: "re_duplicate",
+      amount: 2500,
+      currency: "usd",
+      status: "succeeded",
+      createdAt: "2026-10-16T12:30:00.000Z",
+      updatedAt: "2026-10-16T12:30:00.000Z",
+    };
+
+    const order = {
+      id: "cs_test_duplicate",
+      stripeSessionId: "cs_test_duplicate",
+      stripePaymentIntentId: "pi_test_duplicate",
+      productId: "product_test",
+      quantity: 1,
+      amountTotal: 10000,
+      currency: "usd",
+      paymentStatus: "paid",
+      customerEmail: null,
+      createdAt: "2026-10-16T12:00:00.000Z",
+      updatedAt: "2026-10-16T12:30:00.000Z",
+      paidAt: "2026-10-16T12:00:00.000Z",
+      refunds: [refund],
+      refundedAmount: 2500,
+    };
+
+    const compareAndSet = vi.fn().mockResolvedValue({
+      applied: true,
+    });
+
+    const ctx = {
+      storage: {
+        orders: {
+          getVersioned: vi.fn().mockResolvedValue({
+            value: order,
+            revision: "revision_1",
+          }),
+          compareAndSet,
+        },
+      },
+    } as unknown as PluginContext;
+
+    const result = await recordStripeRefund(ctx, order.id, refund);
+
+    expect(result).toBe(true);
+
+    const updatedOrder = compareAndSet.mock.calls[0][2];
+
+    expect(updatedOrder.refunds).toHaveLength(1);
+    expect(updatedOrder.refundedAmount).toBe(2500);
+    expect(updatedOrder.paymentStatus).toBe("paid");
+  });
+
+  it("ignores an older refund event", async () => {
+    const order = {
+      id: "cs_test_stale",
+      stripeSessionId: "cs_test_stale",
+      stripePaymentIntentId: "pi_test_stale",
+      productId: "product_test",
+      quantity: 1,
+      amountTotal: 10000,
+      currency: "usd",
+      paymentStatus: "paid",
+      customerEmail: null,
+      createdAt: "2026-10-16T12:00:00.000Z",
+      updatedAt: "2026-10-16T13:00:00.000Z",
+      paidAt: "2026-10-16T12:00:00.000Z",
+      refunds: [
+        {
+          id: "re_test_stale",
+          amount: 2500,
+          currency: "usd",
+          status: "succeeded",
+          createdAt: "2026-10-16T12:30:00.000Z",
+          updatedAt: "2026-10-16T13:00:00.000Z",
+        },
+      ],
+      refundedAmount: 2500,
+    };
+
+    const compareAndSet = vi.fn().mockResolvedValue({
+      applied: true,
+    });
+
+    const ctx = {
+      storage: {
+        orders: {
+          getVersioned: vi.fn().mockResolvedValue({
+            value: order,
+            revision: "revision_1",
+          }),
+          compareAndSet,
+        },
+      },
+    } as unknown as PluginContext;
+
+    const result = await recordStripeRefund(ctx, order.id, {
+      id: "re_test_stale",
+      amount: 2500,
+      currency: "usd",
+      status: "pending",
+      createdAt: "2026-10-16T12:30:00.000Z",
+      updatedAt: "2026-10-16T12:45:00.000Z",
+    });
+
+    expect(result).toBe(true);
+
+    const updatedOrder = compareAndSet.mock.calls[0][2];
+
+    expect(updatedOrder.refunds).toHaveLength(1);
+    expect(updatedOrder.refunds[0].status).toBe("succeeded");
+    expect(updatedOrder.refundedAmount).toBe(2500);
+    expect(updatedOrder.paymentStatus).toBe("paid");
   });
 });
