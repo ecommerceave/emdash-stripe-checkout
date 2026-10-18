@@ -24,6 +24,8 @@ describe("createCheckoutSession route", () => {
 			label: "Products",
 			fields: [
 				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
 				{ slug: "active", label: "Active", type: "boolean" },
 			],
 		});
@@ -32,6 +34,8 @@ describe("createCheckoutSession route", () => {
 			id: "product_test_123",
 			data: {
 				name: "Test Product",
+				price: 25,
+				currency: "USD",
 				active: true,
 			},
 		});
@@ -93,6 +97,57 @@ describe("createCheckoutSession route", () => {
 
 	});
 
+	it("rejects checkout when the Stripe price is out of sync", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_outdated",
+			data: {
+				name: "Test Product",
+				price: 30,
+				currency: "USD",
+				active: true,
+			},
+		});
+
+		await host.fixtures.plugin.kv("state:product:product_outdated", {
+			stripeProductId: "prod_test_outdated",
+			stripePriceId: "price_old_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		const result = await host.transport.invokeRoute(
+			"createCheckoutSession",
+			{
+				productId: "product_outdated",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "This product's price is not synchronized with Stripe.",
+		});
+
+		expect(host.http.requests()).toHaveLength(0);
+	});
+	
 	it("rejects checkout for an inactive product", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -173,6 +228,8 @@ describe("createCheckoutSession route", () => {
 			label: "Products",
 			fields: [
 				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
 				{ slug: "active", label: "Active", type: "boolean" },
 			],
 		});
@@ -181,6 +238,8 @@ describe("createCheckoutSession route", () => {
 			id: "product_bad",
 			data: {
 				name: "Test Product",
+				price: 25,
+				currency: "USD",
 				active: true,
 			},
 		});

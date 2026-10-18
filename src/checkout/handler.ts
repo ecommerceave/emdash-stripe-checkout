@@ -149,6 +149,23 @@ export async function createCheckoutSession(
         };
     }
 
+    const productPrice = product.data?.price;
+    const productCurrency = product.data?.currency;
+
+    if (
+        typeof productPrice !== "number" ||
+        !Number.isFinite(productPrice) ||
+        productPrice < 0 ||
+        typeof productCurrency !== "string" ||
+        stripeState.price !== productPrice ||
+        stripeState.currency !== productCurrency.trim().toLowerCase()
+    ) {
+        return {
+            ok: false,
+            error: "This product's price is not synchronized with Stripe.",
+        };
+    }
+
     const priceId = stripeState.stripePriceId;
 
     const body = new URLSearchParams();
