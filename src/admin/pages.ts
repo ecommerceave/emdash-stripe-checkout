@@ -306,9 +306,15 @@ export async function buildAdminPage(
     const { orders, cursor: nextCursor, hasMore } =
         await listOrders(ctx, ordersCursor);
 
+    // Stripe API credentials
     const stripeSecretKey =
         await ctx.settings.get<string>("stripeSecretKey");
 
+    // Stripe webhook signing secret
+    const stripeWebhookSecret =
+        await ctx.settings.get<string>("stripeWebhookSecret");
+
+    // Previously verified Stripe connection
     const savedConnection =
         await ctx.kv.get<StripeConnectionState>(
             STRIPE_CONNECTION_STATE_KEY,
@@ -325,13 +331,94 @@ export async function buildAdminPage(
               }
             : undefined);
 
+    // Determine whether onboarding guidance is needed.
+    // A configured webhook secret does not necessarily mean
+    // webhook delivery has been verified.
+    const needsSetup =
+        !stripeSecretKey ||
+        !connection?.ok ||
+        !stripeWebhookSecret ||
+        !schema.ok;
+
+    const webhookUrl = ctx.url(
+        `/_emdash/api/plugins/${encodeURIComponent(ctx.plugin.id)}/stripeWebhook`,
+    );
+
     return {
         blocks: [
+            // Dashboard Header
             blocks.header("Stripe Checkout"),
 
             blocks.section(
                 "Lightweight Stripe Checkout integration for EmDash.",
             ),
+
+            // Setup Banner
+            ...(needsSetup
+                ? [
+                    blocks.banner({
+                        variant: "default",
+                        title: "Stripe Setup",
+                        description:
+                            "Connect your Stripe account, enable webhooks, and configure your products to start accepting payments.",
+                    }),
+                ]
+                : []),
+
+            // Guided Setup
+            ...(needsSetup
+                ? [
+                    blocks.columns([
+                        [
+                            blocks.header("1. Connect Stripe"),
+                            blocks.section(
+                                "Add your Stripe Secret Key in plugin settings, then test your connection.",
+                            ),
+                        ],
+                        [
+                            blocks.header("2. Enable Webhooks"),
+                            blocks.section(
+                                "Create a webhook endpoint in Stripe using the URL below, then add its signing secret to plugin settings.",
+                            ),
+                        ],
+                        [
+                            blocks.header("3. Configure Products"),
+                            blocks.section(
+                                "Configure your product collection and add products to begin accepting payments.",
+                            ),
+                        ],
+                    ]),
+                ]
+                : []),
+
+            // Webhook Endpoint URL
+            ...(needsSetup
+                ? [
+                    blocks.section("Stripe Webhook Endpoint"),
+                    blocks.fields([
+                        {
+                            label: "Webhook URL",
+                            value: webhookUrl,
+                        },
+                    ]),
+                ]
+                : []
+            ),
+
+            // Stripe Configuration Links
+            blocks.actions([
+                elements.link("Get Stripe API Keys", {
+                    kind: "external",
+                    url: "https://dashboard.stripe.com/apikeys",
+                }),
+                elements.link("Configure Stripe Webhooks", {
+                    kind: "external",
+                    url: "https://dashboard.stripe.com/webhooks",
+                }),
+                elements.link("Configure Plugin Settings", {
+                    kind: "plugin-settings",
+                }),
+            ]),
 
             // Dashboard Overview
             blocks.stats([
@@ -353,6 +440,15 @@ export async function buildAdminPage(
                                 ? "Stripe Test Mode"
                                 : "Stripe Live Mode"
                             : "Check your Stripe credentials",
+                },
+                {
+                    label: "Webhooks",
+                    value: stripeWebhookSecret
+                        ? "Configured"
+                        : "Needs Setup",
+                    description: stripeWebhookSecret
+                        ? "Signing secret saved; delivery not yet verified"
+                        : "Add your Stripe webhook signing secret",
                 },
                 {
                     label: "Products",
@@ -458,10 +554,10 @@ export async function buildAdminPage(
                         label: "Order",
                         format: "code",
                     },
-                    { 
+                    {
                         key: "product",
                         label: "Product",
-                        format: "text" 
+                        format: "text",
                     },
                     {
                         key: "customer",
