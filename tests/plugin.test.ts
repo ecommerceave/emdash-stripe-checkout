@@ -167,6 +167,48 @@ expect(paidRetryResult).toEqual({
     error: "An order already exists for this Checkout Session.",
 });
 
+// A new checkout attempt must generate a different idempotency key.
+await host.http.respond(
+    STRIPE_URL,
+    new Response(
+        JSON.stringify({
+            id: "cs_test_456",
+            url: "https://checkout.stripe.com/c/pay/cs_test_456",
+        }),
+        {
+            status: 200,
+            headers: {
+                "Content-Type": "application/json",
+            },
+        },
+    ),
+);
+
+const newAttemptResult = await host.transport.invokeRoute(
+    "createCheckoutSession",
+    {
+        productId: "product_test_123",
+        returnPath: "/product-test",
+        checkoutAttemptId: "attempt_test_654321",
+    },
+);
+
+expect(newAttemptResult).toEqual({
+    ok: true,
+    sessionId: "cs_test_456",
+    checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_456",
+});
+
+const allRequests = host.http.requests();
+
+expect(allRequests).toHaveLength(4);
+
+const newAttemptHeaders = new Headers(allRequests[3]?.headers);
+const newAttemptKey = newAttemptHeaders.get("Idempotency-Key");
+
+expect(newAttemptKey).toMatch(/^checkout_[a-f0-9]{64}$/);
+expect(newAttemptKey).not.toBe(idempotencyKey);
+
 const body = new TextDecoder().decode(requests[0]?.body);
 
 	expect(body).toContain(
