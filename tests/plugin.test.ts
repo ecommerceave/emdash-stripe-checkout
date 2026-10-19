@@ -1058,6 +1058,98 @@ describe("product sync", () => {
 		expect(body).toContain("active=false");
 
 	});
+
+	it("reactivates a published product when restored from trash", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv("state:product:product_test_123", {
+			stripeProductId: "prod_test_123",
+			stripePriceId: "price_test_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(JSON.stringify({
+				id: "prod_test_123",
+				active: true,
+			}), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		await host.transport.invokeHook("content:afterRestore", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				status: "published",
+				data: {
+					name: "Test Product",
+					description: "Restored product",
+					sku: "TEST-123",
+					price: 25,
+					currency: "usd",
+					active: true,
+				},
+			},
+		});
+
+		const request = host.http.requests().find(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/products/prod_test_123",
+		);
+
+		expect(request).toBeDefined();
+		expect(request?.method).toBe("POST");
+
+		const body = new TextDecoder().decode(request?.body);
+		expect(body).toContain("active=true");
+	});
+
+	it("does not reactivate a draft product when restored", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv("state:product:product_test_123", {
+			stripeProductId: "prod_test_123",
+			stripePriceId: "price_test_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		await host.transport.invokeHook("content:afterRestore", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				status: "draft",
+				data: {
+					name: "Test Product",
+					price: 25,
+					currency: "usd",
+					active: true,
+				},
+			},
+		});
+
+		const stripeRequests = host.http.requests().filter(
+			(request) =>
+				request.url.includes("api.stripe.com/v1/products"),
+		);
+
+		expect(stripeRequests).toHaveLength(0);
+	});
 });
 
 describe("checkProductSchema route", () => {

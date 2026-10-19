@@ -7,9 +7,10 @@ export type StripeProductState = {
     currency?: string;
 };
 
-export const syncProductAfterPublish: NonNullable<
-    SandboxedPlugin["hooks"]
->["content:afterPublish"] = async (event, ctx) => {
+export const syncProductAfterPublish: Extract<
+    NonNullable<SandboxedPlugin["hooks"]>["content:afterPublish"],
+    (...args: any[]) => any
+> = async (event, ctx) => {
             if (event.collection !== "products") {
                 return;
             }
