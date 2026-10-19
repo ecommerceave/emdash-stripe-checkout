@@ -872,6 +872,63 @@ describe("product sync", () => {
 
 	});
 
+	it("deactivates a Stripe Product when an EmDash product is disabled", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
+
+		await host.fixtures.plugin.kv("state:product:product_test_123", {
+			stripeProductId: "prod_test_123",
+			stripePriceId: "price_existing_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(JSON.stringify({ id: "prod_test_123", active: false }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Test T-Shirt",
+					description: "A test product",
+					price: 25,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: false,
+				},
+			},
+		});
+
+		const requests = host.http.requests();
+
+		const productUpdateRequest = requests.find(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/products/prod_test_123",
+		);
+
+		expect(productUpdateRequest).toBeDefined();
+		expect(productUpdateRequest?.method).toBe("POST");
+
+		const body = new TextDecoder().decode(productUpdateRequest?.body);
+
+		expect(body).toContain("active=false");
+
+		const priceCreateRequest = requests.find(
+			(request) => request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(priceCreateRequest).toBeUndefined();
+	});
+	
 	it("keeps the old Stripe Price active when creating a new Price fails", async () => {
 		host = await createPluginRuntimeTestHost();
 
