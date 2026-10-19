@@ -3,6 +3,7 @@ import type { BlockInteraction } from "@emdash-cms/blocks/server";
 
 import { checkProductSchema } from "./products/schema.js";
 import { syncProductAfterPublish } from "./products/sync.js";
+import { syncProductAfterDelete } from "./products/delete.js";
 import { testStripeConnection } from "./stripe/connection.js";
 import { handleAdminInteraction } from "./admin/handler.js";
 import { createCheckoutSession, verifyCheckoutSession } from "./checkout/handler.js";
@@ -11,6 +12,7 @@ import { handleStripeWebhook } from "./stripe/webhook-handler.js";
 const plugin: SandboxedPlugin = {
     hooks: {
         "content:afterPublish": syncProductAfterPublish,
+        "content:afterDelete": syncProductAfterDelete,
     },
 
     routes: {

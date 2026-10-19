@@ -1013,6 +1013,51 @@ describe("product sync", () => {
 
 	});
 
+	it("deactivates Stripe Product when EmDash product is deleted", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv("state:product:product_test_123", {
+			stripeProductId: "prod_test_123",
+			stripePriceId: "price_test_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(JSON.stringify({
+				id: "prod_test_123",
+				active: false,
+			}), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		await host.transport.invokeHook("content:afterDelete", {
+			id: "product_test_123",
+			collection: "products",
+			permanent: false,
+		});
+
+		const request = host.http.requests().find(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/products/prod_test_123",
+		);
+
+		expect(request).toBeDefined();
+		expect(request?.method).toBe("POST");
+
+		const body = new TextDecoder().decode(request?.body);
+		expect(body).toContain("active=false");
+
+	});
 });
 
 describe("checkProductSchema route", () => {
@@ -1190,7 +1235,6 @@ describe("checkProductSchema route", () => {
 			collectionExists: true,
 		});
 	});
-
 });
 
 describe("admin route", () => {
