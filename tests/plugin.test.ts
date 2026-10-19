@@ -224,6 +224,83 @@ const body = new TextDecoder().decode(requests[0]?.body);
 
 });
 
+	it("creates a Checkout Session without checkoutAttemptId", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_legacy_123",
+			status: "published",
+			data: {
+				name: "Legacy Product",
+				price: 25,
+				currency: "USD",
+				active: true,
+			},
+		});
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.kv("state:product:product_legacy_123", {
+			stripeProductId: "prod_legacy_123",
+			stripePriceId: "price_legacy_123",
+			price: 25,
+			currency: "usd",
+		});
+
+		await host.http.respond(
+			STRIPE_URL,
+			new Response(
+				JSON.stringify({
+					id: "cs_test_legacy123",
+					url: "https://checkout.stripe.com/c/pay/cs_test_legacy123",
+				}),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		// Existing integrations do not supply checkoutAttemptId.
+		const result = await host.transport.invokeRoute(
+			"createCheckoutSession",
+			{
+				productId: "product_legacy_123",
+				returnPath: "/legacy-product",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			sessionId: "cs_test_legacy123",
+			checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_legacy123",
+		});
+
+		const requests = host.http.requests();
+
+		expect(requests).toHaveLength(1);
+
+		const headers = new Headers(requests[0]?.headers);
+
+		expect(headers.has("Idempotency-Key")).toBe(false);
+	});
+
 	it("rejects checkout when the Stripe price is out of sync", async () => {
 		host = await createPluginRuntimeTestHost();
 
