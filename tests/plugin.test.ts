@@ -50,25 +50,28 @@ describe("createCheckoutSession route", () => {
 			currency: "usd",
 		});
 
-		await host.http.respond(
-			STRIPE_URL,
-			new Response(
-				JSON.stringify({
-					id: "cs_test_123",
-					url: "https://checkout.stripe.com/c/pay/cs_test_123",
-				}),
-				{
-					status: 200,
-					headers: {
-						"Content-Type": "application/json",
+		for (let i = 0; i < 2; i++) {
+			await host.http.respond(
+				STRIPE_URL,
+				new Response(
+					JSON.stringify({
+						id: "cs_test_123",
+						url: "https://checkout.stripe.com/c/pay/cs_test_123",
+					}),
+					{
+						status: 200,
+						headers: {
+							"Content-Type": "application/json",
+						},
 					},
-				},
-			),
-		);
+				),
+			);
+		}
 
 		const result = await host.transport.invokeRoute("createCheckoutSession", {
 			productId: "product_test_123",
 			returnPath: "/product-test",
+			checkoutAttemptId: "attempt_test_123456",
 		});
 
 		expect(result).toEqual({
@@ -82,21 +85,102 @@ describe("createCheckoutSession route", () => {
 		expect(requests).toHaveLength(1);
 		expect(requests[0]?.url).toBe(STRIPE_URL);
 		expect(requests[0]?.method).toBe("POST");
-		
-		const body = new TextDecoder().decode(requests[0]?.body);
 
-		expect(body).toContain(
-			"line_items%5B0%5D%5Bprice%5D=price_test_123",
+		const headers = new Headers(requests[0]?.headers);
+
+		const idempotencyKey = headers.get("Idempotency-Key");
+
+		expect(idempotencyKey).toMatch(/^checkout_[a-f0-9]{64}$/);
+		expect(idempotencyKey).toHaveLength(73);
+
+		// Retry the same checkout attempt.
+		const retryResult = await host.transport.invokeRoute(
+			"createCheckoutSession",
+			{
+				productId: "product_test_123",
+				returnPath: "/product-test",
+				checkoutAttemptId: "attempt_test_123456",
+			},
 		);
 
-		expect(body).toContain(
-			"success_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dsuccess%26session_id%3D%7BCHECKOUT_SESSION_ID%7D",
-		);
-		expect(body).toContain(
-			"cancel_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dcancel",
-		);
+		expect(retryResult).toEqual({
+			ok: true,
+			sessionId: "cs_test_123",
+			checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+		});
 
-	});
+		// Verify the retry uses the identical idempotency key.
+		const retryRequests = host.http.requests();
+
+		expect(retryRequests).toHaveLength(2);
+
+		const retryHeaders = new Headers(retryRequests[1]?.headers);
+
+		expect(retryHeaders.get("Idempotency-Key")).toBe(idempotencyKey);
+
+// Mark the existing order as paid.
+const now = new Date().toISOString();
+
+await host.fixtures.plugin.storage("orders", "cs_test_123", {
+    id: "cs_test_123",
+    stripeSessionId: "cs_test_123",
+    productId: "product_test_123",
+    productName: "Test Product",
+    quantity: 1,
+    amountTotal: 2500,
+    currency: "usd",
+    paymentStatus: "paid",
+    customerEmail: null,
+    createdAt: now,
+    updatedAt: now,
+    paidAt: now,
+});
+
+// Stripe returns the same session for another retry.
+await host.http.respond(
+    STRIPE_URL,
+    new Response(
+        JSON.stringify({
+            id: "cs_test_123",
+            url: "https://checkout.stripe.com/c/pay/cs_test_123",
+        }),
+        {
+            status: 200,
+            headers: {
+                "Content-Type": "application/json",
+            },
+        },
+    ),
+);
+
+const paidRetryResult = await host.transport.invokeRoute(
+    "createCheckoutSession",
+    {
+        productId: "product_test_123",
+        returnPath: "/product-test",
+        checkoutAttemptId: "attempt_test_123456",
+    },
+);
+
+expect(paidRetryResult).toEqual({
+    ok: false,
+    error: "An order already exists for this Checkout Session.",
+});
+
+const body = new TextDecoder().decode(requests[0]?.body);
+
+	expect(body).toContain(
+		"line_items%5B0%5D%5Bprice%5D=price_test_123",
+	);
+
+	expect(body).toContain(
+		"success_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dsuccess%26session_id%3D%7BCHECKOUT_SESSION_ID%7D",
+	);
+	expect(body).toContain(
+		"cancel_url=https%3A%2F%2Fplugin.test%2Fproduct-test%3Fcheckout%3Dcancel",
+	);
+
+});
 
 	it("rejects checkout when the Stripe price is out of sync", async () => {
 		host = await createPluginRuntimeTestHost();
@@ -195,17 +279,48 @@ describe("createCheckoutSession route", () => {
 		});
 	});
 
-	it("rejects an invalid checkout request", async () => {
+	it("rejects invalid checkout requests", async () => {
 		host = await createPluginRuntimeTestHost();
 
-		const result = await host.transport.invokeRoute("createCheckoutSession", {
-			productId: "",
-		});
+		const invalidRequests = [
+			{
+				productId: "",
+			},
+			{
+				productId: "product_test_123",
+				checkoutAttemptId: "short",
+			},
+			{
+				productId: "product_test_123",
+				checkoutAttemptId: "invalid attempt id",
+			},
+			{
+				productId: "product_test_123",
+				checkoutAttemptId: "attempt_123!",
+			},
+			{
+				productId: "product_test_123",
+				checkoutAttemptId: 12345678,
+			},
+			{
+				productId: "product_test_123",
+				checkoutAttemptId: "a".repeat(129),
+			},
+		];
 
-		expect(result).toEqual({
-			ok: false,
-			error: "Invalid checkout request.",
-		});
+		for (const input of invalidRequests) {
+			const result = await host.transport.invokeRoute(
+				"createCheckoutSession",
+				input,
+			);
+
+			expect(result).toEqual({
+				ok: false,
+				error: "Invalid checkout request.",
+			});
+		}
+
+		expect(host.http.requests()).toHaveLength(0);
 	});
 
 	it("rejects an external return path", async () => {

@@ -27,28 +27,35 @@ import type { Order } from "../orders/types.js";
 import type { StripeProductState } from "../products/sync.js";
 
 type CheckoutInput = {
-	productId: string;
-	returnPath?: string;
+    productId: string;
+    returnPath?: string;
+    checkoutAttemptId?: string;
 };
 
 function isCheckoutInput(input: unknown): input is CheckoutInput {
-	if (typeof input !== "object" || input === null) {
-		return false;
-	}
+    if (typeof input !== "object" || input === null) {
+        return false;
+    }
 
-	const data = input as Record<string, unknown>;
+    const data = input as Record<string, unknown>;
 
-	const returnPathIsValid =
-	data.returnPath === undefined ||
-	(typeof data.returnPath === "string" &&
-		data.returnPath.startsWith("/") &&
-		!data.returnPath.startsWith("//"));
+    const returnPathIsValid =
+        data.returnPath === undefined ||
+        (typeof data.returnPath === "string" &&
+            data.returnPath.startsWith("/") &&
+            !data.returnPath.startsWith("//"));
 
-	return (
-		typeof data.productId === "string" &&
-		data.productId.trim().length > 0 &&
-		returnPathIsValid
-	);
+    const checkoutAttemptIdIsValid =
+        data.checkoutAttemptId === undefined ||
+        (typeof data.checkoutAttemptId === "string" &&
+            /^[a-zA-Z0-9_-]{8,128}$/.test(data.checkoutAttemptId));
+
+    return (
+        typeof data.productId === "string" &&
+        data.productId.trim().length > 0 &&
+        returnPathIsValid &&
+        checkoutAttemptIdIsValid
+    );
 }
 
 type VerifyCheckoutInput = {
@@ -93,7 +100,11 @@ export async function createCheckoutSession(
         };
     }
 
-    const { productId, returnPath = "/" } = routeCtx.input;
+    const {
+        productId,
+        returnPath = "/",
+        checkoutAttemptId,
+    } = routeCtx.input;
 
     const siteUrl = new URL(ctx.site.url);
     const returnUrl = new URL(returnPath, siteUrl);
@@ -178,6 +189,28 @@ export async function createCheckoutSession(
     body.set("success_url", successUrl);
     body.set("cancel_url", cancelUrl);
 
+    let idempotencyKey: string | undefined;
+
+    if (checkoutAttemptId) {
+        const keyData = JSON.stringify({
+            checkoutAttemptId,
+            productId,
+            priceId,
+            body: body.toString(),
+        });
+
+        const hashBuffer = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(keyData),
+        );
+
+        const hash = Array.from(new Uint8Array(hashBuffer))
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
+
+        idempotencyKey = `checkout_${hash}`;
+    }
+
     if (!ctx.http) {
         return {
             ok: false,
@@ -192,6 +225,11 @@ export async function createCheckoutSession(
             headers: {
                 Authorization: `Bearer ${stripeSecretKey}`,
                 "Content-Type": "application/x-www-form-urlencoded",
+                ...(idempotencyKey
+                    ? {
+                        "Idempotency-Key": idempotencyKey,
+                    }
+                    : {}),
             },
             body: body.toString(),
         },
@@ -266,9 +304,30 @@ export async function createCheckoutSession(
     }
 
     if (!orderCreated) {
+        const existingOrder = await getOrder(ctx, stripeResponse.id);
+
+        if (
+            !existingOrder ||
+            existingOrder.id !== stripeResponse.id ||
+            existingOrder.stripeSessionId !== stripeResponse.id ||
+            existingOrder.productId !== productId ||
+            existingOrder.paymentStatus !== "pending"
+        ) {
+            return {
+                ok: false,
+                error: "An order already exists for this Checkout Session.",
+            };
+        }
+
+        ctx.log.info("Existing Stripe Checkout session reused", {
+            sessionId: stripeResponse.id,
+            productId,
+        });
+
         return {
-            ok: false,
-            error: "An order already exists for this Checkout Session.",
+            ok: true,
+            sessionId: stripeResponse.id,
+            checkoutUrl: stripeResponse.url,
         };
     }
 
