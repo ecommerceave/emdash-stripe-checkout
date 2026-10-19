@@ -32,6 +32,7 @@ describe("createCheckoutSession route", () => {
 
 		await host.fixtures.content("products", {
 			id: "product_test_123",
+			status: "published",
 			data: {
 				name: "Test Product",
 				price: 25,
@@ -118,6 +119,7 @@ describe("createCheckoutSession route", () => {
 
 		await host.fixtures.content("products", {
 			id: "product_outdated",
+			status: "published",
 			data: {
 				name: "Test Product",
 				price: 30,
@@ -236,6 +238,7 @@ describe("createCheckoutSession route", () => {
 
 		await host.fixtures.content("products", {
 			id: "product_bad",
+			status: "published",
 			data: {
 				name: "Test Product",
 				price: 25,
@@ -609,6 +612,53 @@ describe("createCheckoutSession route", () => {
 		});
 	});
 
+	it("rejects checkout for an unpublished product", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_unpublished",
+			status: "draft",
+			data: {
+				name: "Unpublished Test Product",
+				active: true,
+			},
+		});
+
+		await host.fixtures.plugin.kv("state:product:product_unpublished", {
+			stripeProductId: "prod_test_unpublished",
+			stripePriceId: "price_test_unpublished",
+			price: 25,
+			currency: "usd",
+		});
+
+		const result = await host.transport.invokeRoute(
+			"createCheckoutSession",
+			{
+				productId: "product_unpublished",
+			},
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "This product is currently unavailable for purchase.",
+		});
+
+		expect(host.http.requests()).toHaveLength(0);
+	});
 });
 
 describe("product sync", () => {

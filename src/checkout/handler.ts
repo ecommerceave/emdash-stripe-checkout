@@ -128,6 +128,7 @@ export async function createCheckoutSession(
 
     if (
         !product ||
+        product.status !== "published" ||
         (product.data?.active !== true && product.data?.active !== 1)
     ) {
         return {
