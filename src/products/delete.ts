@@ -1,14 +1,12 @@
-import type { SandboxedPlugin } from "emdash/plugin";
+
+import type { PluginContext, SandboxedPlugin } from "emdash/plugin";
 import type { StripeProductState } from "./sync.js";
 
-export const syncProductAfterDelete: NonNullable<
-    SandboxedPlugin["hooks"]
->["content:afterDelete"] = async (event, ctx) => {
-    if (event.collection !== "products") {
-        return;
-    }
-
-    const stateKey = `state:product:${event.id}`;
+export async function deactivateStripeProduct(
+    contentId: string,
+    ctx: PluginContext,
+): Promise<void> {
+    const stateKey = `state:product:${contentId}`;
     const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
 
     if (!stripeState?.stripeProductId) {
@@ -19,8 +17,8 @@ export const syncProductAfterDelete: NonNullable<
         await ctx.settings.get<string>("stripeSecretKey");
 
     if (!stripeSecretKey || !ctx.http) {
-        console.error("[PLUGIN] Cannot deactivate deleted Stripe Product", {
-            id: event.id,
+        console.error("[PLUGIN] Cannot deactivate Stripe Product", {
+            id: contentId,
         });
         return;
     }
@@ -42,16 +40,25 @@ export const syncProductAfterDelete: NonNullable<
 
     if (!response.ok) {
         console.error("[PLUGIN] Stripe Product deactivation failed", {
-            id: event.id,
+            id: contentId,
             stripeProductId: stripeState.stripeProductId,
             status: response.status,
         });
         return;
     }
 
-    console.log("[PLUGIN] Deleted product deactivated in Stripe", {
-        id: event.id,
+    console.log("[PLUGIN] Stripe Product deactivated", {
+        id: contentId,
         stripeProductId: stripeState.stripeProductId,
-        permanent: event.permanent,
     });
+}
+
+export const syncProductAfterDelete: NonNullable<
+    SandboxedPlugin["hooks"]
+>["content:afterDelete"] = async (event, ctx) => {
+    if (event.collection !== "products") {
+        return;
+    }
+
+    await deactivateStripeProduct(event.id, ctx);
 };
