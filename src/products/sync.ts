@@ -1,4 +1,5 @@
 import type { SandboxedPlugin } from "emdash/plugin";
+import { getProductContentTypeSlug } from "./content-type.js";
 
 export type StripeProductState = {
     stripeProductId?: string;
@@ -11,9 +12,9 @@ export const syncProductAfterPublish: Extract<
     NonNullable<SandboxedPlugin["hooks"]>["content:afterPublish"],
     (...args: any[]) => any
 > = async (event, ctx) => {
-            if (event.collection !== "products") {
-                return;
-            }
+            if (event.collection !== await getProductContentTypeSlug(ctx)) {
+				return;
+			}
 
 			const product = event.content.data as Record<string, unknown>;
 			const contentId = String(event.content.id);

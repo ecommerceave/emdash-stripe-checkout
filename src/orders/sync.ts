@@ -1,4 +1,5 @@
 import type { PluginContext } from "emdash/plugin";
+import { getProductContentTypeSlug } from "../products/content-type.js";
 
 import {
     listOrders,
@@ -203,7 +204,7 @@ export async function syncOrderCustomerEmails(
             if (missingProductName) {
                 try {
                     const product = await ctx.content?.get(
-                        "products",
+                        await getProductContentTypeSlug(ctx),
                         order.productId,
                     );
 

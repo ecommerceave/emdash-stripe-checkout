@@ -1,5 +1,6 @@
 
 import type { PluginContext } from "emdash/plugin";
+import { getProductContentTypeSlug } from "./content-type.js";
 
 export const REQUIRED_PRODUCT_FIELDS = [
     { slug: "name", type: "string", required: true },
@@ -27,7 +28,9 @@ export type ProductSchemaCheck = {
 export async function checkProductSchema(
     ctx: PluginContext,
 ): Promise<ProductSchemaCheck> {
-    const collection = await ctx.schema?.getCollection("products");
+    const collection = await ctx.schema?.getCollection(
+        await getProductContentTypeSlug(ctx),
+    );
 
     if (!collection) {
         return {
@@ -74,17 +77,18 @@ export async function checkProductSchema(
 
 export function getProductSchemaGuidance(
     schema: ProductSchemaCheck,
+    contentTypeSlug = "products",
 ): string {
     if (!schema.collectionExists) {
-        return [
-            "Stripe Checkout requires a Products collection.",
+    return [
+            `Stripe Checkout requires a Product Content Type with the slug "${contentTypeSlug}".`,
             "",
             "SETUP INSTRUCTIONS",
             "",
-            "1. Open Collections in your EmDash admin.",
-            "2. Create a new collection with:",
-            "   Name: Products",
-            "   Slug: products",
+            "1. Open Content Types in your EmDash admin.",
+            "2. Create or configure a Content Type with:",
+            "   Name: Products (or your preferred name)",
+            `   Slug: ${contentTypeSlug}`,
             "",
             "3. Add the following fields:",
             "",
@@ -102,7 +106,7 @@ export function getProductSchemaGuidance(
             "",
             "5. Save your collection and return to Stripe Checkout.",
             "",
-            "The plugin will automatically detect the collection.",
+           "The plugin will automatically detect the configured Content Type.",
         ].join("\n");
     }
 
@@ -111,11 +115,11 @@ export function getProductSchemaGuidance(
     );
 
     if (invalidFields.length === 0) {
-        return "The Products collection is configured correctly.";
+        return `The Product Content Type "${contentTypeSlug}" is configured correctly.`;
     }
 
     return [
-        "The Products collection exists, but some fields need attention:",
+        `The Product Content Type "${contentTypeSlug}" exists, but some fields need attention:`,
         "",
         ...invalidFields.map((field) => {
             const requirement = field.required

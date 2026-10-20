@@ -1,10 +1,11 @@
 import type { SandboxedPlugin } from "emdash/plugin";
 import { syncProductAfterPublish } from "./sync.js";
+import { getProductContentTypeSlug } from "./content-type.js";
 
 export const syncProductAfterRestore: NonNullable<
     SandboxedPlugin["hooks"]
 >["content:afterRestore"] = async (event, ctx) => {
-    if (event.collection !== "products") {
+    if (event.collection !== await getProductContentTypeSlug(ctx)) {
         return;
     }
 

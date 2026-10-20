@@ -60,6 +60,12 @@
 
 	"admin": {
         "settingsSchema": {
+			"productContentTypeSlug": {
+				"label": "Product Content Type",
+				"description": "Enter the slug of the EmDash Content Type used for Stripe products. Configure this before syncing products. Default: products.",
+				"type": "string",
+				"default": "products"
+			},
 			"stripeSecretKey": {
 				"label": "Stripe Secret Key",
 				"description": "Your Stripe secret API key. Use a test-mode key while setting up and testing the plugin.",

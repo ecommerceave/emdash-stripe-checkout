@@ -23,6 +23,7 @@ import {
 
 import type { Order } from "../orders/types.js";
 import type { StripeProductState } from "../products/sync.js";
+import { getProductContentTypeSlug } from "../products/content-type.js";
 
 type CheckoutInput = {
     productId: string;
@@ -112,7 +113,10 @@ export async function createCheckoutSession(
         };
     }
 
-    const product = await ctx.content?.get("products", productId);
+    const product = await ctx.content?.get(
+        await getProductContentTypeSlug(ctx),
+        productId,
+    );
 
     if (
         !product ||

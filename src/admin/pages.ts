@@ -7,6 +7,7 @@ import {
 } from "@emdash-cms/blocks/server";
 
 import { listOrders } from "../orders/storage.js";
+import { getProductContentTypeSlug } from "../products/content-type.js";
 
 import {
     checkProductSchema,
@@ -177,8 +178,8 @@ export async function buildAdminPage(
                     label: "Products",
                     value: schema.ok ? "Ready" : "Needs Attention",
                     description: schema.ok
-                        ? "Product collection configured"
-                        : "Product schema requires attention",
+                        ? "Product Content Type configured"
+                        : "Product Content Type requires attention",
                 },
                 {
                     label: "Recent Orders",
@@ -191,7 +192,10 @@ export async function buildAdminPage(
             ...(!schema.ok
                 ? [
                       blocks.section(
-                          getProductSchemaGuidance(schema),
+                          getProductSchemaGuidance(
+                            schema,
+                            await getProductContentTypeSlug(ctx),
+                        ),
                       ),
                   ]
                 : []),

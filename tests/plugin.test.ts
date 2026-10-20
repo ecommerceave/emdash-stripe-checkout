@@ -896,6 +896,77 @@ const body = new TextDecoder().decode(requests[0]?.body);
 });
 
 describe("product sync", () => {
+	it("syncs products from a custom Content Type", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.plugin.setting(
+			"productContentTypeSlug",
+			"store-items",
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/products",
+			new Response(
+				JSON.stringify({ id: "prod_custom_123" }),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices",
+			new Response(
+				JSON.stringify({ id: "price_custom_123" }),
+				{
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			),
+		);
+
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "store-items",
+			content: {
+				id: "custom_product_123",
+				data: {
+					name: "Custom T-Shirt",
+					description: "A product from a custom Content Type",
+					price: 25,
+					currency: "USD",
+					sku: "CUSTOM-001",
+					active: true,
+				},
+			},
+		});
+
+		const requests = host.http.requests();
+
+		expect(
+			requests.some(
+				(request) =>
+					request.url === "https://api.stripe.com/v1/products",
+			),
+		).toBe(true);
+
+		expect(
+			requests.some(
+				(request) =>
+					request.url === "https://api.stripe.com/v1/prices",
+			),
+		).toBe(true);
+	});
+	
 	it("creates a Stripe Product when a product is published", async () => {
 		host = await createPluginRuntimeTestHost();
 
@@ -1679,7 +1750,7 @@ describe("admin route", () => {
 		});
 
 		expect(JSON.stringify(result)).toContain(
-			"Stripe Checkout requires a Products collection.",
+			'Stripe Checkout requires a Product Content Type with the slug \\"products\\".'
 		);
 
 		expect(JSON.stringify(result)).toContain(
@@ -1793,7 +1864,7 @@ describe("admin route", () => {
 
 		expect(output).toContain("Orders");
 		expect(output).toContain(
-			"Stripe Checkout requires a Products collection."
+			'Stripe Checkout requires a Product Content Type with the slug \\"products\\".'
 		);
 	});
 });

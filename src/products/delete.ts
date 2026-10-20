@@ -1,6 +1,7 @@
 
 import type { PluginContext, SandboxedPlugin } from "emdash/plugin";
 import type { StripeProductState } from "./sync.js";
+import { getProductContentTypeSlug } from "./content-type.js";
 
 export async function deactivateStripeProduct(
     contentId: string,
@@ -56,7 +57,7 @@ export async function deactivateStripeProduct(
 export const syncProductAfterDelete: NonNullable<
     SandboxedPlugin["hooks"]
 >["content:afterDelete"] = async (event, ctx) => {
-    if (event.collection !== "products") {
+    if (event.collection !== await getProductContentTypeSlug(ctx)) {
         return;
     }
 
