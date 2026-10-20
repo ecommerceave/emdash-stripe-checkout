@@ -9,10 +9,8 @@ import {
 import { testStripeConnection } from "../stripe/connection.js";
 import { syncOrderCustomerEmails } from "../orders/sync.js";
 
-import {
-    buildAdminPage,
-    buildOrderDetailsPage,
-} from "./pages.js";
+import { buildAdminPage } from "./pages.js";
+import { buildOrderDetailsPage } from "./order-details.js";
 
 export async function handleAdminInteraction(
     interaction: BlockInteraction,
