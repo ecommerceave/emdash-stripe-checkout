@@ -8,7 +8,8 @@ import { syncProductAfterRestore } from "./products/restore.js";
 import { syncProductAfterUnpublish } from "./products/unpublish.js";
 import { testStripeConnection } from "./stripe/connection.js";
 import { handleAdminInteraction } from "./admin/handler.js";
-import { createCheckoutSession, verifyCheckoutSession } from "./checkout/handler.js";
+import { createCheckoutSession } from "./checkout/handler.js";
+import { verifyCheckoutSession } from "./checkout/verify.js";
 import { handleStripeWebhook } from "./stripe/webhook-handler.js";
 
 const plugin: SandboxedPlugin = {
