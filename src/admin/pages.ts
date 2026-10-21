@@ -80,54 +80,53 @@ export async function buildAdminPage(
             // Setup Banner
             ...(needsSetup
                 ? [
-                    blocks.banner({
-                        variant: "default",
-                        title: "Stripe Setup",
-                        description:
-                            "Connect your Stripe account, enable webhooks, and configure your products to start accepting payments.",
-                    }),
-                ]
+                      blocks.banner({
+                          variant: "default",
+                          title: "Stripe Setup",
+                          description:
+                              "Connect your Stripe account, enable webhooks, and configure your products to start accepting payments.",
+                      }),
+                  ]
                 : []),
 
             // Guided Setup
             ...(needsSetup
                 ? [
-                    blocks.columns([
-                        [
-                            blocks.header("1. Connect Stripe"),
-                            blocks.section(
-                                "Add your Stripe Secret Key in plugin settings, then test your connection.",
-                            ),
-                        ],
-                        [
-                            blocks.header("2. Enable Webhooks"),
-                            blocks.section(
-                                "Create a webhook endpoint in Stripe using the URL below, then add its signing secret to plugin settings.",
-                            ),
-                        ],
-                        [
-                            blocks.header("3. Configure Products"),
-                            blocks.section(
-                                "Configure your product collection and add products to begin accepting payments.",
-                            ),
-                        ],
-                    ]),
-                ]
+                      blocks.columns([
+                          [
+                              blocks.header("1. Connect Stripe"),
+                              blocks.section(
+                                  "Add your Stripe Secret Key in plugin settings, then test your connection.",
+                              ),
+                          ],
+                          [
+                              blocks.header("2. Enable Webhooks"),
+                              blocks.section(
+                                  "Create a webhook endpoint in Stripe using the URL below, then add its signing secret to plugin settings.",
+                              ),
+                          ],
+                          [
+                              blocks.header("3. Configure Products"),
+                              blocks.section(
+                                  "Configure your product collection and add products to begin accepting payments.",
+                              ),
+                          ],
+                      ]),
+                  ]
                 : []),
 
             // Webhook Endpoint URL
             ...(needsSetup
                 ? [
-                    blocks.section("Stripe Webhook Endpoint"),
-                    blocks.fields([
-                        {
-                            label: "Webhook URL",
-                            value: webhookUrl,
-                        },
-                    ]),
-                ]
-                : []
-            ),
+                      blocks.section("Stripe Webhook Endpoint"),
+                      blocks.fields([
+                          {
+                              label: "Webhook URL",
+                              value: webhookUrl,
+                          },
+                      ]),
+                  ]
+                : []),
 
             // Stripe Configuration Links
             blocks.actions([
@@ -193,9 +192,9 @@ export async function buildAdminPage(
                 ? [
                       blocks.section(
                           getProductSchemaGuidance(
-                            schema,
-                            await getProductContentTypeSlug(ctx),
-                        ),
+                              schema,
+                              await getProductContentTypeSlug(ctx),
+                          ),
                       ),
                   ]
                 : []),

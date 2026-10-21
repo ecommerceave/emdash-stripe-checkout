@@ -60,21 +60,27 @@
 
 	"admin": {
         "settingsSchema": {
-			"productContentTypeSlug": {
-				"label": "Product Content Type",
-				"description": "Enter the slug of the EmDash Content Type used for Stripe products. Configure this before syncing products. Default: products.",
-				"type": "string",
-				"default": "products"
-			},
 			"stripeSecretKey": {
-				"label": "Stripe Secret Key",
+				"label": "Stripe — Secret Key",
 				"description": "Your Stripe secret API key. Use a test-mode key while setting up and testing the plugin.",
 				"type": "secret"
 			},
 			"stripeWebhookSecret": {
-				"label": "Stripe Webhook Signing Secret",
+				"label": "Stripe — Webhook Signing Secret",
 				"description": "The webhook signing secret provided by Stripe (starts with whsec_). Used to verify incoming Stripe webhook events.",
 				"type": "secret"
+			},
+			"productContentTypeSlug": {
+				"label": "Products — Content Type Slug",
+				"description": "The slug of the EmDash Content Type containing your products. Default: products.",
+				"type": "string",
+				"default": "products"
+			},
+			"storefrontSlug": {
+				"label": "Products — Storefront URL Slug",
+				"description": "The URL prefix for product pages, such as products or shop. Default: products. Storefront routing support will be implemented separately.",
+				"type": "string",
+				"default": "products"
 			}
 		},
 		"pages": [

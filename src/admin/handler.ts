@@ -24,7 +24,8 @@ export async function handleAdminInteraction(
         try {
             const result = await syncOrderCustomerEmails(ctx);
 
-            const response = await buildAdminPage(ctx);
+            const response =
+                await buildAdminPage(ctx);
 
             response.toast = {
                 message:
