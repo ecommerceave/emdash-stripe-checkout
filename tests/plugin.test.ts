@@ -1995,3 +1995,35 @@ describe("testStripeConnection route", () => {
 	});
 
 });
+
+
+describe("getStorefrontConfig route", () => {
+    it("returns the default Product Content Type slug", async () => {
+        host = await createPluginRuntimeTestHost();
+
+        const result = await host.transport.invokeRoute(
+            "getStorefrontConfig",
+        );
+
+        expect(result).toEqual({
+            productContentTypeSlug: "products",
+        });
+    });
+
+    it("returns the configured Product Content Type slug", async () => {
+        host = await createPluginRuntimeTestHost();
+
+        await host.fixtures.plugin.setting(
+            "productContentTypeSlug",
+            "ecommerceaveproducts",
+        );
+
+        const result = await host.transport.invokeRoute(
+            "getStorefrontConfig",
+        );
+
+        expect(result).toEqual({
+            productContentTypeSlug: "ecommerceaveproducts",
+        });
+    });
+});
