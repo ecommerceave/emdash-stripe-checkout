@@ -24,7 +24,7 @@
     "build": "emdash-plugin build && npm run build:storefront",
     "dev": "emdash-plugin dev",
     "typecheck": "tsc --noEmit",
-    "test": "emdash-plugin validate && vitest run",
+    "test": "emdash-plugin validate && vitest run --maxWorkers=1",
     "bundle": "emdash-plugin bundle",
     "login": "emdash-plugin login",
     "publish": "emdash-plugin publish",
