@@ -2,6 +2,7 @@ import { pluginRoute, type SandboxedPlugin } from "emdash/plugin";
 import type { BlockInteraction } from "@emdash-cms/blocks/server";
 
 import { checkProductSchema } from "./products/schema.js";
+import { getProductContentTypeSlug } from "./products/content-type.js";
 import { syncProductAfterPublish } from "./products/sync.js";
 import { syncProductAfterDelete } from "./products/delete.js";
 import { syncProductAfterRestore } from "./products/restore.js";
@@ -51,6 +52,20 @@ const plugin: SandboxedPlugin = {
             },
             handler: async (_routeCtx, ctx) => {
                 return await testStripeConnection(ctx);
+            },
+        }),
+
+        getStorefrontConfig: pluginRoute({
+            public: true,
+            methods: ["GET"],
+            request: {
+                body: "none",
+            },
+            handler: async (_routeCtx, ctx) => {
+                return {
+                    productContentTypeSlug:
+                        await getProductContentTypeSlug(ctx),
+                };
             },
         }),
 

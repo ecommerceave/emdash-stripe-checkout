@@ -1,3 +1,4 @@
+
 # Stripe Checkout for EmDash
 
 A lightweight Stripe Checkout integration for [EmDash CMS](https://emdashcms.com), developed by [eCommerce Ave](https://ecommerceave.com).
@@ -9,12 +10,15 @@ Stripe Checkout allows EmDash users to sell products through Stripe's hosted che
 - Connect an existing Stripe account using a Stripe Secret Key.
 - Support Stripe test mode and live mode.
 - Manage products directly within EmDash CMS.
+- Support configurable Product Content Types.
 - Automatically synchronize published products with Stripe.
 - Create and update Stripe products and prices.
 - Support USD, CAD, EUR, and GBP currencies.
 - Generate Stripe-hosted checkout sessions.
 - Verify checkout session payment status.
 - Validate the required Products collection structure.
+- Retrieve storefront configuration through a public API endpoint.
+- Integrate checkout functionality into custom Astro storefronts.
 
 ## Installation
 
@@ -50,10 +54,10 @@ Register it inside your existing EmDash integration:
 
 ```js
 emdash({
-    // Your existing EmDash configuration
-    sandboxed: [
-        stripeCheckout,
-    ],
+  // Your existing EmDash configuration
+  sandboxed: [
+    stripeCheckout,
+  ],
 })
 ```
 
@@ -76,6 +80,8 @@ When you're ready to accept real payments, configure your live-mode secret key (
 
 Stripe Checkout requires a Products collection in EmDash.
 
+The default Content Type slug is `products`, but you can configure a different slug through the plugin's **Products — Content Type Slug** setting.
+
 ### Create the Collection
 
 1. Open your EmDash administration dashboard.
@@ -84,6 +90,8 @@ Stripe Checkout requires a Products collection in EmDash.
    - Name: Products
    - Slug: products
 4. Add the fields listed below.
+
+If you are using a custom Content Type slug, use that slug instead of `products`.
 
 ### Required Collection Fields
 
@@ -106,6 +114,62 @@ Configure the Currency select field with:
 
 Save the collection when finished.
 
+### Configure the Product Content Type
+
+1. Navigate to **Plugins → Stripe Checkout**.
+2. Open the plugin settings.
+3. Locate **Products — Content Type Slug**.
+4. Enter the slug of the Content Type containing your products.
+5. Save the settings.
+
+For example:
+
+```text
+ecommerceaveproducts
+```
+
+The plugin uses this setting to locate and synchronize product entries.
+
+Your storefront must query the same Content Type.
+
+### Configure Product URLs
+
+EmDash Content Types also include a **URL Pattern** setting.
+
+This controls the public URL generated for each product, including the destination of the **Live View** button in the content editor.
+
+For example, if your Astro storefront template is:
+
+```text
+src/pages/products/[slug].astro
+```
+
+Set the Content Type's URL Pattern to:
+
+```text
+/products/{slug}
+```
+
+You can configure this under:
+
+**EmDash Admin → Content Types → Your Product Content Type → URL Pattern**
+
+The Content Type slug and URL Pattern do not need to match.
+
+For example:
+
+| Setting | Value |
+|---------|-------|
+| Product Content Type Slug | `ecommerceaveproducts` |
+| URL Pattern | `/products/{slug}` |
+| Astro Storefront Route | `src/pages/products/[slug].astro` |
+
+With this configuration, the plugin retrieves product data from `ecommerceaveproducts`, while customers view products at URLs such as `/products/example-product`.
+
+**Important:** The plugin does not automatically change Content Type URL Patterns. Developers control their storefront URL structure.
+
+For additional information, see the [Storefront Integration Guide](docs/storefront-integration.md).
+
 ### Verify Your Setup
 
 1. Navigate to **Plugins → Stripe Checkout**.
@@ -121,7 +185,7 @@ Stripe Checkout uses Stripe's hosted payment pages to process customer payments.
 
 ### Product Synchronization
 
-1. Create a product in your EmDash Products collection.
+1. Create a product in your configured EmDash Products collection.
 2. Enter the product name, description, price, and currency.
 3. Publish the product.
 4. Stripe Checkout automatically creates the corresponding product and price in Stripe.
@@ -245,14 +309,48 @@ Only display a successful payment confirmation when the plugin confirms the paym
 
 ### Customer Checkout
 
-The plugin provides two checkout-related routes:
+The plugin provides these storefront-related API routes:
 
 - `createCheckoutSession` — Creates a Stripe-hosted Checkout session for a product.
 - `verifyCheckoutSession` — Verifies the payment status of a Stripe Checkout session.
+- `getStorefrontConfig` — Returns storefront configuration, including the configured Product Content Type slug.
 
-A website frontend can use these routes to initiate checkout and verify the resulting payment.
+A website frontend can use these routes to initiate checkout, verify the resulting payment, and retrieve the configured Product Content Type.
 
 **Note:** The plugin provides the checkout functionality, but a storefront or Buy button must be integrated separately.
+
+For detailed instructions, see the [Storefront Integration Guide](docs/storefront-integration.md).
+
+### Retrieving Storefront Configuration
+
+The plugin provides a public endpoint for retrieving its configured Product Content Type slug.
+
+**Endpoint:**
+
+```text
+/_emdash/api/plugins/{PLUGIN_INSTALLATION_ID}/getStorefrontConfig
+```
+
+**Method:** `GET`
+
+**Example response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "productContentTypeSlug": "products"
+  }
+}
+```
+
+The returned slug reflects the plugin's configured Product Content Type.
+
+Developers can use this value when querying products in their Astro storefront, avoiding the need to hardcode a Content Type slug.
+
+The endpoint returns storefront configuration only. It does not expose Stripe Secret Keys.
+
+For a complete integration example, see the [Storefront Integration Guide](docs/storefront-integration.md).
 
 ### Testing Payments
 
@@ -270,13 +368,11 @@ pnpm run test
 pnpm run build
 ```
 
-To test against a running EmDash site, run `pnpm run dev` in this
-directory (rebuilds on save) and `pnpm add file:../path/to/this`
-in the site. Then `import emdashStripeCheckout from "emdash-stripe-checkout"` and pass
-it into `emdash({ sandboxed: [emdashStripeCheckout] })`.
+To test against a running EmDash site, run `pnpm run dev` in this directory (rebuilds on save) and `pnpm add file:../path/to/this` in the site.
 
-`pnpm run test` builds the plugin and runs its tests through Worker Loader using
-EmDash's production sandbox wrapper and host bridge.
+Then import `emdashStripeCheckout` from `emdash-stripe-checkout` and pass it into `emdash({ sandboxed: [emdashStripeCheckout] })`.
+
+`pnpm run test` builds the plugin and runs its tests through Worker Loader using EmDash's production sandbox wrapper and host bridge.
 
 ## Publish
 
@@ -285,18 +381,18 @@ pnpm run login -- ecommerceave.com
 pnpm run publish
 ```
 
-To publish from GitHub Actions, run `pnpm run release:setup`. The command
-creates one shared workflow at the Git repository root.
+To publish from GitHub Actions, run `pnpm run release:setup`. The command creates one shared workflow at the Git repository root.
 
-## Version bumps
+## Version Bumps
 
-Bump `version` in `package.json` when you ship a release. The
-scaffold's `emdash-plugin.jsonc` deliberately omits `version` —
-the build pipeline reads it from `package.json` so there's a single
-source of truth. **Bump major** for breaking changes, **bump minor**
-for new routes or hooks, **bump patch** for fixes.
+Bump `version` in `package.json` when you ship a release.
 
-You MUST bump version whenever you change `capabilities`, `allowedHosts`,
-or `storage` in the manifest. Installed users have consented to the
-old trust contract; a change without a version bump would let new
-behaviour slip past consent.
+The scaffold's `emdash-plugin.jsonc` deliberately omits `version` — the build pipeline reads it from `package.json` so there's a single source of truth.
+
+- **Major:** Breaking changes.
+- **Minor:** New routes or hooks.
+- **Patch:** Bug fixes.
+
+You MUST bump the version whenever you change `capabilities`, `allowedHosts`, or `storage` in the manifest.
+
+Installed users have consented to the old trust contract; a change without a version bump would let new behavior slip past consent.
