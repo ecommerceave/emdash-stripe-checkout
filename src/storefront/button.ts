@@ -1,3 +1,4 @@
+
 import { startCheckout } from "./checkout.js";
 
 const checkoutAttempts = new WeakMap<HTMLButtonElement, string>();
@@ -38,8 +39,17 @@ export function initializeCheckoutButtons(
       button.textContent = "Loading...";
 
       try {
+        // Preserve the selected product for payment verification
+        // when Stripe redirects back to the storefront.
+        const returnUrl = new URL(window.location.pathname, window.location.origin);
+        returnUrl.searchParams.set("product_id", productId);
+
         const checkoutUrl = await startCheckout(
-          { apiBase, productId },
+          {
+            apiBase,
+            productId,
+            returnPath: `${returnUrl.pathname}${returnUrl.search}`,
+          },
           attemptId,
         );
 
