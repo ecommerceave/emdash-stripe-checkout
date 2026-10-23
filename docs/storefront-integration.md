@@ -12,6 +12,25 @@ These helpers allow developers to create checkout sessions, connect Buy Now butt
 - A storefront page with access to the product's content entry ID.
 - The API base URL of the active Stripe Checkout plugin installation.
 
+## Ready-to-Use Astro Storefront Examples
+
+The repository includes complete Astro storefront page examples that you can adapt for your EmDash website.
+
+Two checkout approaches are available:
+
+1. **Product listing with detail pages** — Display a product catalog at `/products/`, with individual product pages containing a Buy Now button.
+2. **Direct checkout listing** — Display products with Buy Now buttons directly on `/products/direct-checkout/`, without requiring customers to open a separate product page.
+
+Both approaches use the plugin's configured Product Content Type and verify completed payments after customers return from Stripe Checkout.
+
+The examples include shared helpers, responsive styling, and standalone HTML layouts.
+
+**[View the Astro storefront examples](../examples/astro-storefront/README.md)**
+
+The examples README includes installation instructions, file locations, storefront URLs, and customization guidance.
+
+---
+
 ## Importing the Helpers
 
 ```ts

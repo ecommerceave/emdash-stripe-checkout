@@ -1,0 +1,355 @@
+
+---
+import { getEmDashEntry } from "emdash";
+import { Image } from "emdash/ui";
+import {
+  getStripeCheckoutApi,
+  getStripeCheckoutProductContentType,
+} from "../../lib/stripe-checkout";
+import { formatCurrency } from "../../lib/format-currency";
+import type { ProductData } from "../../lib/product-types";
+
+const stripeCheckoutApi = await getStripeCheckoutApi();
+
+const productContentType = await getStripeCheckoutProductContentType(
+  Astro.url.origin,
+);
+
+const { slug } = Astro.params;
+
+if (!slug) {
+  return Astro.redirect("/404");
+}
+
+const { entry: product, cacheHint } = await getEmDashEntry<string, ProductData>(
+  productContentType,
+  slug,
+);
+
+if (
+  !product ||
+  (product.data.active !== true && product.data.active !== 1)
+) {
+  return Astro.redirect("/404");
+}
+
+if (Astro.cache?.enabled) {
+  Astro.cache.set(cacheHint);
+}
+
+const checkoutStatus = Astro.url.searchParams.get("checkout");
+const checkoutSessionId = Astro.url.searchParams.get("session_id");
+
+const formattedPrice = formatCurrency(
+  product.data.price,
+  String(product.data.currency || "USD"),
+);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{product.data.name}</title>
+    <style is:global>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+  <main class="storefront">
+    <a href="/products" class="back-link">
+      <span aria-hidden="true">←</span> Back to Products
+    </a>
+
+    {checkoutStatus === "success" && checkoutSessionId && (
+      <p
+        id="checkout-success"
+        class="checkout-message checkout-success"
+        role="status"
+        aria-live="polite"
+        data-session-id={checkoutSessionId}
+        data-product-id={product.data.id}
+      >
+        Verifying your payment...
+      </p>
+    )}
+
+    {checkoutStatus === "cancel" && (
+      <p class="checkout-message checkout-cancel" role="status">
+        Checkout was canceled. Your order was not placed.
+      </p>
+    )}
+
+    <div class="product-layout">
+      <div class="product-gallery">
+        {product.data.image ? (
+          <Image
+            image={product.data.image}
+            alt={product.data.image.alt || product.data.name}
+          />
+        ) : (
+          <div class="image-placeholder">
+            No image available
+          </div>
+        )}
+      </div>
+
+      <div class="product-information">
+        <h1>{product.data.name}</h1>
+
+        <p class="product-price">
+          {formattedPrice}
+        </p>
+
+        {product.data.description && (
+          <div class="product-description">
+            <p>{product.data.description}</p>
+          </div>
+        )}
+
+        {product.data.sku && (
+          <p class="product-sku">
+            SKU: {product.data.sku}
+          </p>
+        )}
+
+        <button
+          id="buy-now"
+          class="buy-button"
+          type="button"
+          data-stripe-checkout
+          data-product-id={product.data.id}
+          data-checkout-api={stripeCheckoutApi}
+        >
+          Buy Now
+        </button>
+
+        <p class="checkout-note">
+          Secure checkout powered by Stripe.
+        </p>
+      </div>
+    </div>
+  </main>
+
+<script>
+  import {
+    initializeCheckoutButtons,
+    verifyCheckout,
+  } from "emdash-stripe-checkout/storefront";
+
+  initializeCheckoutButtons();
+
+  const successMessage =
+    document.querySelector<HTMLElement>("#checkout-success");
+
+  if (successMessage) {
+    const sessionId = successMessage.dataset.sessionId;
+    const productId = successMessage.dataset.productId;
+
+    const apiBase =
+      document.querySelector<HTMLButtonElement>("#buy-now")
+        ?.dataset.checkoutApi;
+
+    if (sessionId && productId && apiBase) {
+      try {
+        const paid = await verifyCheckout({
+          apiBase,
+          sessionId,
+          productId,
+        });
+
+        successMessage.textContent = paid
+          ? "Thank you! Your payment was successful."
+          : "We could not verify your payment.";
+      } catch (error) {
+        console.error("Checkout verification error:", error);
+
+        successMessage.textContent =
+          "We could not verify your payment.";
+      }
+    } else {
+      successMessage.textContent =
+        "We could not verify your payment.";
+    }
+  }
+</script>
+
+<style>
+  .storefront {
+    --storefront-button-bg: light-dark(#111827, #ffffff);
+    --storefront-button-hover: light-dark(#374151, #e5e7eb);
+    --storefront-button-text: light-dark(#ffffff, #111827);
+
+    width: min(100% - 2rem, 1200px);
+    margin: 0 auto;
+    padding: 2.5rem 0 5rem;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    color: inherit;
+    font-size: 0.875rem;
+    text-decoration: none;
+  }
+
+  .back-link:hover {
+    text-decoration: underline;
+  }
+
+  .product-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: clamp(2rem, 5vw, 5rem);
+  }
+
+  .product-gallery {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #f9fafb;
+  }
+
+  .product-gallery :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .image-placeholder {
+    color: #6b7280;
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  .product-information {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 0.5rem;
+  }
+
+  .product-information h1 {
+    margin: 0 0 1.25rem;
+    font-size: clamp(2rem, 4vw, 3rem);
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+
+  .product-price {
+    margin: 0 0 2rem;
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .product-description {
+    width: 100%;
+    margin-bottom: 1.5rem;
+    line-height: 1.7;
+  }
+
+  .product-description p {
+    margin: 0;
+  }
+
+  .product-sku {
+    margin: 0 0 2rem;
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  .buy-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 220px;
+    min-height: 52px;
+    padding: 0.875rem 2rem;
+    border: 0;
+    border-radius: 6px;
+    background: var(--storefront-button-bg);
+    color: var(--storefront-button-text);
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms ease;
+  }
+
+  .buy-button:hover {
+    background: var(--storefront-button-hover);
+  }
+
+  .buy-button:focus-visible,
+.back-link:focus-visible {
+  outline: 3px solid #6b7280;
+  outline-offset: 3px;
+}
+
+  .buy-button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  .checkout-note {
+    margin: 0.875rem 0 0;
+    color: #6b7280;
+    font-size: 0.8125rem;
+  }
+
+  .checkout-message {
+    margin: 0 0 2rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid;
+    border-radius: 8px;
+    font-size: 0.9375rem;
+  }
+
+  .checkout-success {
+    border-color: #86efac;
+    background: #f0fdf4;
+    color: #166534;
+  }
+
+  .checkout-cancel {
+    border-color: #fcd34d;
+    background: #fffbeb;
+    color: #92400e;
+  }
+
+  @media (max-width: 768px) {
+    .storefront {
+      padding: 1.5rem 0 3rem;
+    }
+
+    .product-layout {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+
+    .product-information {
+      padding-top: 0;
+    }
+
+    .product-price {
+      margin-bottom: 1.5rem;
+    }
+
+    .buy-button {
+      width: 100%;
+    }
+  }
+</style>
+  </body>
+</html>

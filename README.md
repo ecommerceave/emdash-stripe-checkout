@@ -191,6 +191,21 @@ Stripe Checkout uses Stripe's hosted payment pages to process customer payments.
 4. Stripe Checkout automatically creates the corresponding product and price in Stripe.
 5. When an existing product's price changes, the plugin creates a new Stripe Price.
 
+### Ready-to-Use Astro Storefront Examples
+
+Want to get a storefront running without building the integration from scratch?
+
+The repository includes two ready-to-use Astro storefront examples:
+
+- **Product listing with detail pages:** Browse products at `/products/` and purchase from individual product pages.
+- **Direct checkout listing:** Display products with Buy Now buttons directly on `/products/direct-checkout/`.
+
+Both examples include responsive layouts, product images, pricing, Stripe Checkout integration, and payment verification.
+
+**[View the Astro Storefront Examples](examples/astro-storefront/README.md)**
+
+For developers building a custom storefront, see the [Storefront Integration Guide](docs/storefront-integration.md).
+
 ### Integrating a Buy Now Button
 
 The examples below use the registry ID for the official eCommerce Ave Stripe Checkout plugin (`@ecommerceave.com/emdash-stripe-checkout`).

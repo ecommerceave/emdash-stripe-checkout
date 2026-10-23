@@ -1,0 +1,276 @@
+
+---
+import { getEmDashCollection } from "emdash";
+import { Image } from "emdash/ui";
+import { getStripeCheckoutProductContentType } from "../../lib/stripe-checkout";
+import { formatCurrency } from "../../lib/format-currency";
+import type { ProductData } from "../../lib/product-types";
+
+const productContentType = await getStripeCheckoutProductContentType(
+  Astro.url.origin,
+);
+
+const { entries, error, cacheHint } = await getEmDashCollection<string, ProductData>(
+  productContentType,
+  { status: "published" },
+);
+
+if (error) {
+  console.error("Unable to load products:", error);
+}
+
+const products = (entries ?? []).filter(
+  (product) =>
+    product.data.active === true ||
+    product.data.active === 1,
+);
+
+if (Astro.cache?.enabled && cacheHint) {
+  Astro.cache.set(cacheHint);
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Products</title>
+    <style is:global>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+  <main class="storefront">
+    <header class="storefront-header">
+      <h1>Our Products</h1>
+      <p>Browse our products and select one to learn more.</p>
+    </header>
+
+    {products.length > 0 ? (
+      <div class="product-grid">
+        {products.map((product) => (
+          <article class="product-card">
+            <a
+              class="product-image"
+              href={`/products/${encodeURIComponent(
+                String(product.data.slug),
+              )}`}
+              aria-label={`View ${product.data.name}`}
+            >
+              {product.data.image ? (
+                <Image
+                  image={product.data.image}
+                  alt={product.data.image.alt || product.data.name}
+                />
+              ) : (
+                <span class="image-placeholder">
+                  No image available
+                </span>
+              )}
+            </a>
+
+            <div class="product-content">
+              <h2>{product.data.name}</h2>
+
+              <p class="product-price">
+                {formatCurrency(
+                  product.data.price,
+                  String(product.data.currency || "USD"),
+                )}
+              </p>
+
+              <a
+                class="product-button"
+                href={`/products/${encodeURIComponent(
+                  String(product.data.slug),
+                )}`}
+              >
+                View Details
+              </a>
+            </div>
+          </article>
+        ))}
+      </div>
+    ) : (
+      <p class="empty-message">
+        No products are currently available.
+      </p>
+    )}
+  </main>
+  </body>
+</html>
+
+<style>
+  /*
+   * Portable Stripe Checkout storefront styles.
+   *
+   * Vanilla CSS with no dependency on EmDash
+   * theme.css or tokens.css.
+   *
+   * Inherits the website's active color scheme
+   * rather than following the operating system
+   * independently.
+   */
+
+  .storefront {
+    color-scheme: inherit;
+
+    --storefront-card-bg: light-dark(#ffffff, #1e293b);
+    --storefront-card-text: light-dark(#0f172a, #f1f5f9);
+    --storefront-border: light-dark(#e2e8f0, #334155);
+    --storefront-image-bg: light-dark(#f8fafc, #273449);
+    --storefront-muted: light-dark(#64748b, #94a3b8);
+    --storefront-button-bg: light-dark(#111827, #ffffff);
+    --storefront-button-hover: light-dark(#374151, #e5e7eb);
+    --storefront-button-text: light-dark(#ffffff, #111827);
+    --storefront-focus: light-dark(#6b7280, #cbd5e1);
+
+    width: min(100% - 2rem, 1200px);
+    margin: 0 auto;
+    padding: 3rem 0;
+    font-family: inherit;
+  }
+
+  /* Page heading */
+
+  .storefront-header {
+    margin-bottom: 2.5rem;
+  }
+
+  .storefront-header h1 {
+    margin: 0 0 0.75rem;
+    font-size: clamp(2rem, 4vw, 3rem);
+    line-height: 1.2;
+  }
+
+  .storefront-header p {
+    margin: 0;
+    opacity: 0.75;
+  }
+
+  /* Product grid */
+
+  .product-grid {
+    display: grid;
+    grid-template-columns: repeat(
+      auto-fill,
+      minmax(min(100%, 250px), 1fr)
+    );
+    gap: 1.5rem;
+  }
+
+  /* Product card */
+
+  .product-card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--storefront-border);
+    border-radius: 12px;
+    background: var(--storefront-card-bg);
+    color: var(--storefront-card-text);
+  }
+
+  /* Product image */
+
+  .product-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: var(--storefront-image-bg);
+    color: var(--storefront-muted);
+    text-decoration: none;
+  }
+
+  .product-image :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .image-placeholder {
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  /* Product information */
+
+  .product-content {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+
+  .product-content h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.3;
+  }
+
+  .product-price {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 700;
+  }
+
+  /* View Details button */
+
+  .product-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: auto;
+    padding: 0.75rem 1.25rem;
+    border: 0;
+    border-radius: 6px;
+    background: var(--storefront-button-bg);
+    color: var(--storefront-button-text);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+    transition: background 150ms ease;
+  }
+
+  .product-button:hover {
+    background: var(--storefront-button-hover);
+  }
+
+  .product-button:focus-visible,
+  .product-image:focus-visible {
+    outline: 3px solid var(--storefront-focus);
+    outline-offset: 3px;
+  }
+
+  /* Empty product listing */
+
+  .empty-message {
+    padding: 2rem;
+    border: 1px dashed var(--storefront-border);
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  /* Responsive adjustments */
+
+  @media (max-width: 640px) {
+    .storefront {
+      padding: 2rem 0;
+    }
+
+    .storefront-header {
+      margin-bottom: 2rem;
+    }
+
+    .product-grid {
+      gap: 1rem;
+    }
+  }
+</style>
