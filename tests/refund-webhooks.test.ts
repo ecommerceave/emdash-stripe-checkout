@@ -18,6 +18,7 @@ vi.mock("../src/stripe/webhooks.js", () => ({
 }));
 
 vi.mock("../src/orders/storage.js", () => ({
+    createOrder: vi.fn(),
     getOrderByPaymentIntent: vi.fn(),
     getOrder: vi.fn(),
     updateOrder: vi.fn(),

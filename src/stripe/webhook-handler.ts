@@ -10,6 +10,7 @@ import {
 import { syncOrderRefunds } from "../orders/refund-sync.js";
 
 import { verifyStripeWebhookSignature } from "./webhooks.js";
+import { recoverCheckoutOrder } from "./recover-checkout-order.js";
 
 import type { Order } from "../orders/types.js";
 
@@ -141,7 +142,16 @@ export async function handleStripeWebhook(
                 sessionId: session.id,
             });
 
-            const order = await getOrder(ctx, session.id);
+            let order = await getOrder(ctx, session.id);
+
+            if (!order) {
+                order = await recoverCheckoutOrder(
+                    ctx,
+                    session.id,
+                    session.client_reference_id,
+                    session.payment_intent,
+                );
+            }
 
             if (!order) {
                 ctx.log.error(
