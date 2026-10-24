@@ -5,9 +5,12 @@ import {
     handleCheckoutWebhook,
     type CheckoutWebhookEvent,
 } from "./checkout-webhook.js";
-import { handleRefundWebhook } from "./refund-webhook.js";
+import {
+    handleRefundWebhook,
+    type RefundWebhookEvent,
+} from "./refund-webhook.js";
 
-type StripeWebhookEvent = CheckoutWebhookEvent;
+type StripeWebhookEvent = CheckoutWebhookEvent | RefundWebhookEvent;
 
 export async function handleStripeWebhook(
     routeCtx: {
