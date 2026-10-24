@@ -80,7 +80,8 @@
 		"pages": [
 			{
 				"path": "/stripe-checkout",
-				"label": "Stripe Checkout"
+				"label": "Stripe Checkout",
+        		"icon": "credit-card"
 			}
 		]
 	}
