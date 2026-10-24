@@ -1,20 +1,5 @@
-import type { PluginContext } from "emdash/plugin";
 
-export type StripeCheckoutSession = {
-    id?: string;
-    url?: string;
-    payment_status?: string;
-    payment_intent?: string | null;
-    client_reference_id?: string;
-    amount_total?: number | null;
-    currency?: string | null;
-    customer_details?: {
-        email?: string | null;
-    };
-    error?: {
-        message?: string;
-    };
-};
+import type { PluginContext } from "emdash/plugin";
 
 import {
     createOrder,
@@ -24,6 +9,11 @@ import {
 import type { Order } from "../orders/types.js";
 import type { StripeProductState } from "../products/sync.js";
 import { getProductContentTypeSlug } from "../products/content-type.js";
+
+import { createStripeSession } from "./stripe-session.js";
+
+// Preserve the existing public type export for compatibility.
+export type { StripeCheckoutSession } from "./stripe-session.js";
 
 type CheckoutInput = {
     productId: string;
@@ -161,97 +151,32 @@ export async function createCheckoutSession(
 
     const priceId = stripeState.stripePriceId;
 
-    const body = new URLSearchParams();
+    // Create the Stripe Checkout Session using the dedicated module.
+    // This preserves the existing request and idempotency behavior.
+    const stripeResult = await createStripeSession(ctx, {
+        stripeSecretKey,
+        productId,
+        priceId,
+        successUrl,
+        cancelUrl,
+        checkoutAttemptId,
+    });
 
-    body.set("mode", "payment");
-    body.set("client_reference_id", productId);
-    body.set("line_items[0][price]", priceId);
-    body.set("line_items[0][quantity]", "1");
-    body.set("success_url", successUrl);
-    body.set("cancel_url", cancelUrl);
-
-    let idempotencyKey: string | undefined;
-
-    if (checkoutAttemptId) {
-        const keyData = JSON.stringify({
-            checkoutAttemptId,
-            productId,
-            priceId,
-            body: body.toString(),
-        });
-
-        const hashBuffer = await crypto.subtle.digest(
-            "SHA-256",
-            new TextEncoder().encode(keyData),
-        );
-
-        const hash = Array.from(new Uint8Array(hashBuffer))
-            .map((byte) => byte.toString(16).padStart(2, "0"))
-            .join("");
-
-        idempotencyKey = `checkout_${hash}`;
-    }
-
-    if (!ctx.http) {
+    if (!stripeResult.ok) {
         return {
             ok: false,
-            error: "Network access is not available.",
+            error: stripeResult.error,
         };
     }
 
-    const response = await ctx.http.fetch(
-        "https://api.stripe.com/v1/checkout/sessions",
-        {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${stripeSecretKey}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-                ...(idempotencyKey
-                    ? {
-                        "Idempotency-Key": idempotencyKey,
-                    }
-                    : {}),
-            },
-            body: body.toString(),
-        },
-    );
+    const stripeResponse = stripeResult.session;
 
-    const stripeResponse =
-        (await response.json()) as StripeCheckoutSession;
-
-    if (!response.ok) {
-        ctx.log.error("Stripe Checkout session creation failed", {
-            status: response.status,
-            message: stripeResponse.error?.message,
-        });
-
-        return {
-            ok: false,
-            error:
-                stripeResponse.error?.message ??
-                "Stripe Checkout session could not be created.",
-        };
-    }
-
-    if (!stripeResponse.url) {
-        return {
-            ok: false,
-            error: "Stripe did not return a Checkout URL.",
-        };
-    }
-
-    if (!stripeResponse.id) {
-        return {
-            ok: false,
-            error: "Stripe did not return a Checkout Session ID.",
-        };
-    }
-
+    // Create the pending order after Stripe returns a valid session.
     const now = new Date().toISOString();
 
     const order: Order = {
-        id: stripeResponse.id,
-        stripeSessionId: stripeResponse.id,
+        id: stripeResponse.id!,
+        stripeSessionId: stripeResponse.id!,
         productId,
         productName,
         quantity: 1,
@@ -284,8 +209,12 @@ export async function createCheckoutSession(
         };
     }
 
+    // An idempotent Stripe request may return an existing session.
     if (!orderCreated) {
-        const existingOrder = await getOrder(ctx, stripeResponse.id);
+        const existingOrder = await getOrder(
+            ctx,
+            stripeResponse.id!,
+        );
 
         if (
             !existingOrder ||
