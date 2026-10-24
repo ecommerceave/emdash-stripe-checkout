@@ -2,7 +2,6 @@ export type OrderPaymentStatus =
     | "pending"
     | "paid"
     | "failed"
-    | "refund_processing"
     | "refund_pending"
     | "refunded";
 
