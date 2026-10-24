@@ -310,4 +310,59 @@ describe("Stripe refund reconciliation", () => {
         expect(result).toBe(false);
         expect(compareAndSet).not.toHaveBeenCalled();
     });
+
+    it("handles a concurrent refund update without overwriting the order", async () => {
+        const refund: OrderRefund = {
+            id: "re_test_concurrent",
+            amount: 10000,
+            currency: "usd",
+            status: "succeeded",
+            createdAt: "2026-10-16T13:00:00.000Z",
+            updatedAt: "2026-10-16T13:00:00.000Z",
+        };
+
+        const order: Order = {
+            id: "cs_test_concurrent",
+            stripeSessionId: "cs_test_concurrent",
+            stripePaymentIntentId: "pi_test_concurrent",
+            productId: "product_test",
+            quantity: 1,
+            amountTotal: 10000,
+            currency: "usd",
+            paymentStatus: "refunded",
+            customerEmail: null,
+            createdAt: "2026-10-16T12:00:00.000Z",
+            updatedAt: "2026-10-16T13:00:00.000Z",
+            paidAt: "2026-10-16T12:00:00.000Z",
+            refunds: [refund],
+            refundedAmount: 10000,
+        };
+
+        const compareAndSet = vi.fn();
+
+        const ctx = {
+            storage: {
+                orders: {
+                    getVersioned: vi.fn().mockResolvedValue({
+                        value: order,
+                        revision: "revision_2",
+                    }),
+                    compareAndSet,
+                },
+            },
+        } as unknown as PluginContext;
+
+        // Another webhook already synchronized this refund.
+        // Our request began when the order was at revision_1.
+        const result = await reconcileOrderRefunds(
+            ctx,
+            order.id,
+            "pi_test_concurrent",
+            [refund],
+            "revision_1",
+        );
+
+        expect(result).toBe(true);
+        expect(compareAndSet).not.toHaveBeenCalled();
+    });
 });

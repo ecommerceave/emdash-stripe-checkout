@@ -105,13 +105,32 @@ export async function reconcileOrderRefunds(
       return false;
     }
 
-    // Reject a Stripe snapshot if the order changed
-    // after the Stripe API request began.
+    // If another webhook updated the order while we were fetching
+    // Stripe data, only acknowledge the snapshot if the current
+    // refund history already matches it exactly.
     if (
         expectedRevision !== undefined &&
         current.revision !== expectedRevision
     ) {
-        return false;
+        const currentOrder = current.value as Order;
+        const currentRefunds = currentOrder.refunds ?? [];
+
+        const alreadySynchronized =
+            currentOrder.stripePaymentIntentId === paymentIntentId &&
+            currentRefunds.length === refunds.length &&
+            refunds.every((refund) =>
+                currentRefunds.some(
+                    (existing) =>
+                        existing.id === refund.id &&
+                        existing.amount === refund.amount &&
+                        existing.currency === refund.currency &&
+                        existing.status === refund.status &&
+                        existing.createdAt === refund.createdAt &&
+                        existing.failureReason === refund.failureReason
+                )
+            );
+
+        return alreadySynchronized;
     }
 
     const order = current.value as Order;
