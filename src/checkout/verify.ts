@@ -1,3 +1,4 @@
+
 import type { PluginContext } from "emdash/plugin";
 
 import {
@@ -178,14 +179,6 @@ export async function verifyCheckoutSession(
                 };
             }
 
-            if (shouldSavePaymentIntent && stripeResponse.payment_intent) {
-                await savePaymentIntentOrderLookup(
-                    ctx,
-                    stripeResponse.payment_intent,
-                    sessionId,
-                );
-            }
-            
             ctx.log.info("Stripe Checkout order verified", {
                 orderId: order.id,
                 paymentStatus: shouldMarkPaid
@@ -193,6 +186,22 @@ export async function verifyCheckoutSession(
                     : order.paymentStatus,
                 customerEmailUpdated: shouldUpdateEmail,
             });
+        }
+
+        // Ensure the PaymentIntent lookup exists even when
+        // the order was previously marked as paid.
+        const paymentIntentId =
+            typeof stripeResponse.payment_intent === "string" &&
+            stripeResponse.payment_intent.startsWith("pi_")
+                ? stripeResponse.payment_intent
+                : order.stripePaymentIntentId;
+
+        if (paymentIntentId?.startsWith("pi_")) {
+            await savePaymentIntentOrderLookup(
+                ctx,
+                paymentIntentId,
+                order.id,
+            );
         }
     }
 
