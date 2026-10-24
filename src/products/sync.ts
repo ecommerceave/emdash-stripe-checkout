@@ -1,5 +1,14 @@
+
 import type { SandboxedPlugin } from "emdash/plugin";
+
 import { getProductContentTypeSlug } from "./content-type.js";
+
+import {
+    createStripeProduct,
+    updateStripeProduct,
+    createStripePrice,
+    deactivateStripePrice,
+} from "./stripe-api.js";
 
 export type StripeProductState = {
     stripeProductId?: string;
@@ -12,269 +21,183 @@ export const syncProductAfterPublish: Extract<
     NonNullable<SandboxedPlugin["hooks"]>["content:afterPublish"],
     (...args: any[]) => any
 > = async (event, ctx) => {
-            if (event.collection !== await getProductContentTypeSlug(ctx)) {
-				return;
-			}
+    if (event.collection !== await getProductContentTypeSlug(ctx)) {
+        return;
+    }
 
-			const product = event.content.data as Record<string, unknown>;
-			const contentId = String(event.content.id);
+    const product = event.content.data as Record<string, unknown>;
+    const contentId = String(event.content.id);
 
-			const stateKey = `state:product:${contentId}`;
-			const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
+    const stateKey = `state:product:${contentId}`;
+    const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
 
-			const name = typeof product.name === "string" ? product.name.trim() : "";
-			const description =
-				typeof product.description === "string"
-					? product.description.trim()
-					: "";
-			const sku = typeof product.sku === "string" ? product.sku.trim() : "";
-			const price = typeof product.price === "number" ? product.price : NaN;
-			const currency =
-				typeof product.currency === "string"
-					? product.currency.trim().toLowerCase()
-					: "usd";
-			const active = product.active === true || product.active === 1;
+    const name =
+        typeof product.name === "string"
+            ? product.name.trim()
+            : "";
 
-			let imageUrl = "";
+    const description =
+        typeof product.description === "string"
+            ? product.description.trim()
+            : "";
 
-			if (
-				typeof product.image === "object" &&
-				product.image !== null &&
-				"id" in product.image &&
-				typeof product.image.id === "string"
-			) {
-				const media = await ctx.media?.get(product.image.id);
+    const sku =
+        typeof product.sku === "string"
+            ? product.sku.trim()
+            : "";
 
-				if (media?.url) {
-					const siteUrl = new URL(ctx.site.url);
-					const isLocal =
-						siteUrl.hostname === "localhost" ||
-						siteUrl.hostname === "127.0.0.1";
+    const price =
+        typeof product.price === "number"
+            ? product.price
+            : NaN;
 
-					if (!isLocal) {
-						imageUrl = new URL(media.url, siteUrl).toString();
-					}
-				}
+    const currency =
+        typeof product.currency === "string"
+            ? product.currency.trim().toLowerCase()
+            : "usd";
 
-			}
+    const active =
+        product.active === true || product.active === 1;
 
-			if (!name || !Number.isFinite(price) || price < 0 || !currency) {
-				console.error("[PLUGIN] Product cannot be synced to Stripe", {
-					id: contentId,
-					name,
-					price,
-					currency,
-				});
-				return;
-			}
+    // Resolve the product image for Stripe.
+    let imageUrl = "";
 
-			const unitAmount = Math.round(price * 100);
+    if (
+        typeof product.image === "object" &&
+        product.image !== null &&
+        "id" in product.image &&
+        typeof product.image.id === "string"
+    ) {
+        const media = await ctx.media?.get(product.image.id);
 
-			const stripeSecretKey =
-				await ctx.settings.get<string>("stripeSecretKey");
+        if (media?.url) {
+            const siteUrl = new URL(ctx.site.url);
 
-			if (!stripeSecretKey) {
-				console.error("[PLUGIN] Stripe Secret Key has not been configured.");
-				return;
-			}
+            const isLocal =
+                siteUrl.hostname === "localhost" ||
+                siteUrl.hostname === "127.0.0.1";
 
-			if (!ctx.http) {
-				console.error("[PLUGIN] Network access is not available.");
-				return;
-			}
+            if (!isLocal) {
+                imageUrl = new URL(media.url, siteUrl).toString();
+            }
+        }
+    }
 
-			if (!stripeState) {
-				const stripeProductBody = new URLSearchParams();
+    // Validate product information before syncing.
+    if (
+        !name ||
+        !Number.isFinite(price) ||
+        price < 0 ||
+        !currency
+    ) {
+        console.error("[PLUGIN] Product cannot be synced to Stripe", {
+            id: contentId,
+            name,
+            price,
+            currency,
+        });
 
-				stripeProductBody.set("name", name);
-				stripeProductBody.set("active", active ? "true" : "false");
-				stripeProductBody.set(
-					"metadata[emdash_content_id]",
-					contentId,
-				);
+        return;
+    }
 
-				if (description) {
-					stripeProductBody.set("description", description);
-				}
+    const unitAmount = Math.round(price * 100);
 
-				if (imageUrl) {
-					stripeProductBody.set("images[0]", imageUrl);
-				}
+    const stripeSecretKey =
+        await ctx.settings.get<string>("stripeSecretKey");
 
-				if (sku) {
-					stripeProductBody.set("metadata[sku]", sku);
-				}
+    if (!stripeSecretKey) {
+        console.error(
+            "[PLUGIN] Stripe Secret Key has not been configured.",
+        );
+        return;
+    }
 
-				const stripeProductResponse = await ctx.http.fetch(
-					"https://api.stripe.com/v1/products",
-					{
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-							"Content-Type": "application/x-www-form-urlencoded",
-							"Idempotency-Key": `emdash-product-${contentId}`,
-						},
-						body: stripeProductBody.toString(),
-					},
-				);
+    if (!ctx.http) {
+        console.error(
+            "[PLUGIN] Network access is not available.",
+        );
+        return;
+    }
 
-				const stripeProduct = (await stripeProductResponse.json()) as {
-					id?: string;
-					error?: {
-						message?: string;
-					};
-				};
+    const stripeProductInput = {
+        contentId,
+        name,
+        description,
+        sku,
+        active,
+        imageUrl,
+        stripeSecretKey,
+    };
 
-				if (!stripeProductResponse.ok || !stripeProduct.id) {
-					console.error("[PLUGIN] Stripe Product creation failed", {
-						status: stripeProductResponse.status,
-						message: stripeProduct.error?.message,
-					});
-					return;
-				}
+    // Create a Stripe product if one does not already exist.
+    if (!stripeState) {
+        const stripeProductId = await createStripeProduct(
+            ctx,
+            stripeProductInput,
+        );
 
-				await ctx.kv.set(stateKey, {
-					stripeProductId: stripeProduct.id,
-				});
+        if (!stripeProductId) {
+            return;
+        }
 
-				console.log("[PLUGIN] Stripe Product created", {
-					emdashContentId: contentId,
-					stripeProductId: stripeProduct.id,
-				});
-			}
+        await ctx.kv.set(stateKey, {
+            stripeProductId,
+        });
+    }
 
-			if (stripeState?.stripeProductId) {
-				const stripeProductBody = new URLSearchParams();
+    // Update existing Stripe products.
+    // Newly created products are not updated again.
+    if (stripeState?.stripeProductId) {
+        const updated = await updateStripeProduct(
+            ctx,
+            stripeState.stripeProductId,
+            stripeProductInput,
+        );
 
-				stripeProductBody.set("name", name);
-				stripeProductBody.set("active", active ? "true" : "false");
-				stripeProductBody.set("description", description);
-				stripeProductBody.set("metadata[emdash_content_id]", contentId);
-				stripeProductBody.set("metadata[sku]", sku);
-				if (imageUrl) {
-					stripeProductBody.set("images[0]", imageUrl);
-				}
+        if (!updated) {
+            return;
+        }
+    }
 
-				const stripeProductResponse = await ctx.http.fetch(
-					`https://api.stripe.com/v1/products/${stripeState.stripeProductId}`,
-					{
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-							"Content-Type": "application/x-www-form-urlencoded",
-						},
-						body: stripeProductBody.toString(),
-					},
-				);
+    // Reload state after product creation or update.
+    const currentState =
+        (await ctx.kv.get<StripeProductState>(stateKey)) ?? {};
 
-				if (!stripeProductResponse.ok) {
-					const stripeProduct = (await stripeProductResponse.json()) as {
-						error?: {
-							message?: string;
-						};
-					};
+    const priceChanged =
+        currentState.price !== price ||
+        currentState.currency !== currency;
 
-					console.error("[PLUGIN] Stripe Product update failed", {
-						status: stripeProductResponse.status,
-						message: stripeProduct.error?.message,
-					});
-					return;
-				}
+    // Create a Stripe Price when missing or changed.
+    if (
+        currentState.stripeProductId &&
+        (!currentState.stripePriceId || priceChanged)
+    ) {
+        const stripePriceId = await createStripePrice(ctx, {
+            contentId,
+            stripeProductId: currentState.stripeProductId,
+            currency,
+            unitAmount,
+            stripeSecretKey,
+        });
 
-				console.log("[PLUGIN] Stripe Product updated", {
-					stripeProductId: stripeState.stripeProductId,
-				});
-			}
+        if (!stripePriceId) {
+            return;
+        }
 
-			const currentState =
-				(await ctx.kv.get<StripeProductState>(stateKey)) ?? {};
+        // Save the new price before deactivating the old one.
+        await ctx.kv.set(stateKey, {
+            ...currentState,
+            stripePriceId,
+            price,
+            currency,
+        });
 
-			const priceChanged =
-				currentState.price !== price ||
-				currentState.currency !== currency;
-
-			if (
-				currentState.stripeProductId &&
-				(!currentState.stripePriceId || priceChanged)
-			) {
-
-				const stripePriceBody = new URLSearchParams();
-
-				stripePriceBody.set("product", currentState.stripeProductId);
-				stripePriceBody.set("currency", currency);
-				stripePriceBody.set("unit_amount", String(unitAmount));
-
-				const stripePriceResponse = await ctx.http.fetch(
-					"https://api.stripe.com/v1/prices",
-					{
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${stripeSecretKey}`,
-							"Content-Type": "application/x-www-form-urlencoded",
-							"Idempotency-Key":
-							`emdash-price-${contentId}-${currency}-${unitAmount}`,
-						},
-						body: stripePriceBody.toString(),
-					},
-				);
-
-				const stripePrice = (await stripePriceResponse.json()) as {
-					id?: string;
-					error?: {
-						message?: string;
-					};
-				};
-
-				if (!stripePriceResponse.ok || !stripePrice.id) {
-					console.error("[PLUGIN] Stripe Price creation failed", {
-						status: stripePriceResponse.status,
-						message: stripePrice.error?.message,
-					});
-					return;
-				}
-
-				await ctx.kv.set(stateKey, {
-					...currentState,
-					stripePriceId: stripePrice.id,
-					price,
-					currency,
-				});
-
-				if (currentState.stripePriceId && priceChanged) {
-					const oldPriceBody = new URLSearchParams();
-					oldPriceBody.set("active", "false");
-
-					const oldPriceResponse = await ctx.http.fetch(
-						`https://api.stripe.com/v1/prices/${currentState.stripePriceId}`,
-						{
-							method: "POST",
-							headers: {
-								Authorization: `Bearer ${stripeSecretKey}`,
-								"Content-Type": "application/x-www-form-urlencoded",
-							},
-							body: oldPriceBody.toString(),
-						},
-					);
-
-					if (!oldPriceResponse.ok) {
-						console.error("[PLUGIN] Old Stripe Price could not be deactivated", {
-							stripePriceId: currentState.stripePriceId,
-							status: oldPriceResponse.status,
-						});
-					} else {
-						console.log("[PLUGIN] Old Stripe Price deactivated", {
-							stripePriceId: currentState.stripePriceId,
-						});
-					}
-				}
-
-				console.log("[PLUGIN] Stripe Price created", {
-					stripeProductId: currentState.stripeProductId,
-					stripePriceId: stripePrice.id,
-					price,
-					currency,
-					unitAmount,
-				});
-			}
-
+        if (currentState.stripePriceId && priceChanged) {
+            await deactivateStripePrice(
+                ctx,
+                currentState.stripePriceId,
+                stripeSecretKey,
+            );
+        }
+    }
 };
