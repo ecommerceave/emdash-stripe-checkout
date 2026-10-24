@@ -65,6 +65,8 @@ emdash({
 
 You will need a Stripe account to accept payments.
 
+#### API Key Setup
+
 1. Sign in to your [Stripe Dashboard](https://dashboard.stripe.com/).
 2. Navigate to **Developers → API keys**.
 3. Copy your Stripe Secret Key.
@@ -74,7 +76,106 @@ Use a Stripe test-mode secret key (`sk_test_`) while testing.
 
 When you're ready to accept real payments, configure your live-mode secret key (`sk_live_`).
 
-**Security:** Never expose your Stripe Secret Key in frontend code or commit it to GitHub.
+#### Stripe Webhook Setup
+
+Stripe webhooks allow the plugin to receive payment and refund updates directly from Stripe.
+
+Webhooks are important for keeping transaction records synchronized, including when customers do not return to your website after checkout.
+
+**1. Create a webhook destination**
+
+1. Open your Stripe Dashboard.
+2. Navigate to **Workbench → Webhooks**.
+3. Select **Create an event destination**.
+4. Choose **Your account** as the event source.
+5. Select the following events:
+
+   - `checkout.session.completed`
+   - `refund.created`
+   - `refund.updated`
+   - `refund.failed`
+
+6. Choose **Webhook endpoint** as the destination type.
+
+**2. Configure the endpoint URL**
+
+Enter your website's public webhook endpoint:
+
+```text
+https://yourdomain.com/_emdash/api/plugins/{PLUGIN_INSTALLATION_ID}/stripeWebhook
+```
+
+Replace `yourdomain.com` with your website's domain and `{PLUGIN_INSTALLATION_ID}` with the installed plugin's actual ID.
+
+The endpoint must be publicly accessible over HTTPS.
+
+**3. Configure the signing secret**
+
+After creating the destination:
+
+1. Open the webhook destination in Stripe.
+2. Locate its **Signing secret**.
+3. Reveal and copy the secret beginning with `whsec_`.
+4. Open your Stripe Checkout plugin settings in EmDash.
+5. Paste the secret into the **Stripe Webhook Signing Secret** field.
+6. Save the settings.
+
+The plugin uses this secret to verify that incoming webhook requests were signed by Stripe.
+
+**4. Test the webhook**
+
+Use Stripe Sandbox or test mode to verify the integration.
+
+1. Complete a test purchase using Stripe's test card.
+2. Confirm the payment appears in EmDash Transactions.
+3. Refund the test payment from Stripe.
+4. Verify that the transaction status changes to **Refunded** in EmDash.
+5. Review the webhook delivery history in Stripe.
+
+Successful webhook deliveries should return HTTP `200`.
+
+If an event fails, inspect its HTTP response and your server logs before retrying.
+
+#### Test and Production Environments
+
+Stripe test and live environments use separate API credentials, webhook destinations, and signing secrets.
+
+When moving to production:
+
+1. Replace the test API key with your live API key.
+2. Create a webhook destination for your production website in Stripe's live environment.
+3. Configure the same four webhook events.
+4. Save the live destination's signing secret in EmDash.
+5. Verify that production webhook deliveries succeed.
+
+Do not reuse a test webhook signing secret for a live destination.
+
+#### Local Development
+
+For local testing, Stripe needs a publicly accessible endpoint.
+
+You can use a temporary HTTPS tunnel, such as Cloudflare Tunnel, to forward Stripe webhook requests to your local EmDash development server.
+
+For example:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:4321
+```
+
+Use the generated HTTPS hostname when configuring your Stripe test webhook destination.
+
+Temporary tunnel URLs may change when the tunnel restarts. Update the Stripe webhook destination if the hostname changes.
+
+Do not use a temporary development tunnel for production.
+
+#### Security
+
+- Never expose Stripe Secret Keys or webhook signing secrets in frontend code.
+- Never commit Stripe credentials to GitHub.
+- Use HTTPS for webhook endpoints.
+- Keep test and live credentials separate.
+- Keep webhook signature verification enabled.
+- Store Stripe credentials only in the appropriate EmDash plugin settings.
 
 ## Products Collection Setup
 
