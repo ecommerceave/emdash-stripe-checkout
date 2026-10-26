@@ -102,6 +102,26 @@ export async function claimPriceOperation(
                 continue;
             }
 
+            // An expired idempotency key cannot be safely retried.
+            // Stripe may have created the Price even if the original
+            // request failed before we received its response.
+            if (!withinIdempotencyWindow) {
+                console.error(
+                    "[PLUGIN] Stripe Price operation requires manual reconciliation. Automatic recovery is unavailable.",
+                    {
+                        stateKey,
+                        operationId: pending.operationId,
+                        stripeProductId: pending.stripeProductId,
+                        status: pending.status,
+                        createdAt: pending.createdAt,
+                        reason:
+                            typeof pending.createdAt === "number"
+                                ? "Idempotency recovery window expired or timestamp is invalid."
+                                : "Operation has no creation timestamp.",
+                    },
+                );
+            }
+
             return {
                 state,
                 operationId: pending.operationId,

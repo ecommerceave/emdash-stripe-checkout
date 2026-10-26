@@ -497,6 +497,10 @@ describe("Stripe Product Price synchronization", () => {
     });
     
     it("does not reclaim a Stripe Price operation outside the idempotency window", async () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+        
         const now = Date.now();
 
         const storedState = {
@@ -545,6 +549,19 @@ describe("Stripe Product Price synchronization", () => {
         );
         expect(storedState.pendingPriceOperation.status).toBe("processing");
         expect(compareAndSet).not.toHaveBeenCalled();
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+            expect.stringContaining(
+                "Stripe Price operation requires manual reconciliation",
+            ),
+            expect.objectContaining({
+                stateKey: "state:product:product_test",
+                operationId: "original-operation-123",
+                stripeProductId: "prod_test",
+                status: "processing",
+            }),
+        );
+
+        consoleErrorSpy.mockRestore();
     });
 
     it("does not automatically recover a legacy operation without timestamps", async () => {
