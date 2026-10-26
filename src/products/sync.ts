@@ -10,11 +10,23 @@ import {
     deactivateStripePrice,
 } from "./stripe-api.js";
 
+import {
+    claimPriceOperation,
+    markPriceOperationRetryable,
+    completePriceOperation,
+} from "./price-operation.js";
+
 export type StripeProductState = {
     stripeProductId?: string;
     stripePriceId?: string;
     price?: number;
     currency?: string;
+    pendingPriceOperation?: {
+        operationId: string;
+        stripeProductId: string;
+        currency: string;
+        unitAmount: number;
+    };
 };
 
 export const syncProductAfterPublish: Extract<
@@ -25,11 +37,59 @@ export const syncProductAfterPublish: Extract<
         return;
     }
 
-    const product = event.content.data as Record<string, unknown>;
     const contentId = String(event.content.id);
 
-    const stateKey = `state:product:${contentId}`;
-    const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
+	// Retrieve the current published product instead of trusting
+	// potentially outdated data from the publish event.
+	if (!ctx.content) {
+		console.error(
+			"[PLUGIN] Content access is not available.",
+			{ contentId },
+		);
+		return;
+	}
+
+	const currentProduct = await ctx.content.get(event.collection, contentId);
+
+	if (!currentProduct || currentProduct.status !== "published") {
+		console.warn(
+			"[PLUGIN] Skipping Stripe synchronization because the product is not currently published.",
+			{ contentId },
+		);
+		return;
+	}
+
+	const product = currentProduct.data as Record<string, unknown>;
+	const eventProduct = event.content.data as Record<string, unknown>;
+
+	// Ignore an older publish event if its price or currency
+	// differs from the currently published product.
+	const publishedPrice = product.price;
+	const eventPrice = eventProduct.price;
+
+	const publishedCurrency =
+		typeof product.currency === "string"
+			? product.currency.trim().toLowerCase()
+			: "usd";
+
+	const eventCurrency =
+		typeof eventProduct.currency === "string"
+			? eventProduct.currency.trim().toLowerCase()
+			: "usd";
+
+	if (
+		publishedPrice !== eventPrice ||
+		publishedCurrency !== eventCurrency
+	) {
+		console.warn(
+			"[PLUGIN] Skipping outdated product publish event.",
+			{ contentId },
+		);
+		return;
+	}
+
+	const stateKey = `state:product:${contentId}`;
+	const stripeState = await ctx.kv.get<StripeProductState>(stateKey);
 
     const name =
         typeof product.name === "string"
@@ -167,30 +227,91 @@ export const syncProductAfterPublish: Extract<
         currentState.price !== price ||
         currentState.currency !== currency;
 
+    
     // Create a Stripe Price when missing or changed.
     if (
         currentState.stripeProductId &&
         (!currentState.stripePriceId || priceChanged)
     ) {
-        const stripePriceId = await createStripePrice(ctx, {
-            contentId,
-            stripeProductId: currentState.stripeProductId,
-            currency,
-            unitAmount,
-            stripeSecretKey,
-        });
+        const claim = await claimPriceOperation(
+			ctx,
+			stateKey,
+			currentState.stripeProductId,
+			currency,
+			unitAmount,
+		);
+
+		if (!claim || !claim.acquired) {
+			return;
+		}
+
+		const { operationId } = claim;
+
+        let stripePriceId: string | null;
+
+		try {
+			stripePriceId = await createStripePrice(ctx, {
+				contentId,
+				stripeProductId: currentState.stripeProductId,
+				currency,
+				unitAmount,
+				stripeSecretKey,
+				operationId,
+			});
+		} catch (error) {
+			console.error(
+				"[PLUGIN] Stripe Price creation encountered an exception.",
+				{
+					contentId,
+					operationId,
+					error,
+				},
+			);
+
+			// The request may have succeeded at Stripe.
+			// Leave the operation in "processing" so recovery
+			// can reuse the original idempotency key.
+			return;
+		}
 
         if (!stripePriceId) {
-            return;
-        }
+			const markedRetryable = await markPriceOperationRetryable(
+				ctx,
+				stateKey,
+				operationId,
+				claim.attemptId,
+			);
 
-        // Save the new price before deactivating the old one.
-        await ctx.kv.set(stateKey, {
-            ...currentState,
-            stripePriceId,
-            price,
-            currency,
-        });
+			if (!markedRetryable) {
+				console.error(
+					"[PLUGIN] Failed to mark Stripe Price operation as retryable.",
+					{ contentId, operationId },
+				);
+			}
+
+			return;
+		}
+
+        // Atomically save the new Stripe Price before deactivating
+		// the previous one.
+		const completed = await completePriceOperation(
+			ctx,
+			stateKey,
+			operationId,
+			claim.attemptId,
+			stripePriceId,
+			price,
+			currency,
+		);
+
+		if (!completed) {
+			console.error(
+				"[PLUGIN] Stripe Price was created, but its state could not be saved.",
+				{ contentId, operationId, stripePriceId },
+			);
+
+			return;
+		}
 
         if (currentState.stripePriceId && priceChanged) {
             await deactivateStripePrice(

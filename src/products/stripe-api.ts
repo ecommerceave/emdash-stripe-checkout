@@ -24,6 +24,7 @@ type StripePriceInput = {
     currency: string;
     unitAmount: number;
     stripeSecretKey: string;
+    operationId: string;
 };
 
 function stripeHeaders(stripeSecretKey: string) {
@@ -161,7 +162,7 @@ export async function createStripePrice(
             headers: {
                 ...stripeHeaders(input.stripeSecretKey),
                 "Idempotency-Key":
-                    `emdash-price-${input.contentId}-${input.currency}-${input.unitAmount}`,
+                    `emdash-price-${input.contentId}-${input.operationId}`,
             },
             body: body.toString(),
         },

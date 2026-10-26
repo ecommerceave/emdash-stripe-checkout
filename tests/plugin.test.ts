@@ -905,9 +905,35 @@ describe("product sync", () => {
 		);
 
 		await host.fixtures.plugin.setting(
-			"productContentTypeSlug",
-			"store-items",
-		);
+		"productContentTypeSlug",
+		"store_items",
+	);
+
+	await host.fixtures.collection({
+		slug: "store_items",
+		label: "Store Items",
+		fields: [
+			{ slug: "name", label: "Name", type: "string", required: true },
+			{ slug: "description", label: "Description", type: "string" },
+			{ slug: "price", label: "Price", type: "number" },
+			{ slug: "currency", label: "Currency", type: "string" },
+			{ slug: "sku", label: "SKU", type: "string" },
+			{ slug: "active", label: "Active", type: "boolean" },
+		],
+	});
+
+	await host.fixtures.content("store_items", {
+		id: "custom_product_123",
+		status: "published",
+		data: {
+			name: "Custom T-Shirt",
+			description: "A product from a custom Content Type",
+			price: 25,
+			currency: "USD",
+			sku: "CUSTOM-001",
+			active: true,
+		},
+	});
 
 		await host.http.respond(
 			"https://api.stripe.com/v1/products",
@@ -936,7 +962,7 @@ describe("product sync", () => {
 		);
 
 		await host.transport.invokeHook("content:afterPublish", {
-			collection: "store-items",
+			collection: "store_items",
 			content: {
 				id: "custom_product_123",
 				data: {
@@ -974,6 +1000,32 @@ describe("product sync", () => {
 			"stripeSecretKey",
 			"sk_test_example",
 		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 25,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
 
 		await host.http.respond(
 			"https://api.stripe.com/v1/products",
@@ -1038,8 +1090,8 @@ describe("product sync", () => {
 		);
 
 		expect(priceRequest).toBeDefined();
-		expect(priceRequest?.headers["idempotency-key"]).toBe(
-			"emdash-price-product_test_123-usd-2500",
+		expect(priceRequest?.headers["idempotency-key"]).toMatch(
+			/^emdash-price-product_test_123-[0-9a-f-]{36}$/,
 		);
 
 	});
@@ -1051,6 +1103,32 @@ describe("product sync", () => {
 			"stripeSecretKey",
 			"sk_test_example",
 		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 30,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
 
 		await host.fixtures.plugin.kv(
 			"state:product:product_test_123",
@@ -1131,8 +1209,8 @@ describe("product sync", () => {
 		);
 
 		expect(newPriceRequest).toBeDefined();
-		expect(newPriceRequest?.headers["idempotency-key"]).toBe(
-			"emdash-price-product_test_123-usd-3000",
+		expect(newPriceRequest?.headers["idempotency-key"]).toMatch(
+			/^emdash-price-product_test_123-[0-9a-f-]{36}$/,
 		);
 
 		const productCreateRequest = requests.find(
@@ -1166,6 +1244,32 @@ describe("product sync", () => {
 			"stripeSecretKey",
 			"sk_test_example",
 		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Updated Test T-Shirt",
+				description: "Updated product description",
+				price: 25,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
 
 		await host.fixtures.plugin.kv(
 			"state:product:product_test_123",
@@ -1232,6 +1336,32 @@ describe("product sync", () => {
 
 		await host.fixtures.plugin.setting("stripeSecretKey", "sk_test_example");
 
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 25,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: false,
+			},
+		});
+
 		await host.fixtures.plugin.kv("state:product:product_test_123", {
 			stripeProductId: "prod_test_123",
 			stripePriceId: "price_existing_123",
@@ -1283,14 +1413,40 @@ describe("product sync", () => {
 
 		expect(priceCreateRequest).toBeUndefined();
 	});
-	
-	it("keeps the old Stripe Price active when creating a new Price fails", async () => {
+
+	it("preserves the pending Stripe Price operation after a network exception", async () => {
 		host = await createPluginRuntimeTestHost();
 
 		await host.fixtures.plugin.setting(
 			"stripeSecretKey",
 			"sk_test_example",
 		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 30,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
 
 		await host.fixtures.plugin.kv(
 			"state:product:product_test_123",
@@ -1302,35 +1458,164 @@ describe("product sync", () => {
 			},
 		);
 
+		// Product update succeeds.
 		await host.http.respond(
 			"https://api.stripe.com/v1/products/prod_test_123",
 			new Response(
-				JSON.stringify({
-					id: "prod_test_123",
-				}),
-				{
-					status: 200,
-					headers: {
-						"Content-Type": "application/json",
-					},
-				},
+				JSON.stringify({ id: "prod_test_123" }),
+				{ status: 200 },
 			),
 		);
 
+		// Intentionally do NOT queue a response for /v1/prices.
+		// The test host throws when no HTTP response is available,
+		// simulating a network exception.
+
+		const publishEvent = {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Test T-Shirt",
+					description: "A test product",
+					price: 30,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: true,
+				},
+			},
+		};
+
+		// The plugin should catch the network exception.
+		await host.transport.invokeHook(
+			"content:afterPublish",
+			publishEvent,
+		);
+
+		const state = await host.inspect.kv.get<{
+			stripePriceId?: string;
+			price?: number;
+			pendingPriceOperation?: {
+				operationId: string;
+				status?: string;
+				attemptId?: string;
+			};
+		}>("state:product:product_test_123");
+
+		// The previous Stripe Price must remain unchanged.
+		expect(state?.stripePriceId).toBe("price_old_123");
+		expect(state?.price).toBe(25);
+
+		// The operation must remain pending for timeout recovery.
+		expect(state?.pendingPriceOperation?.status).toBe("processing");
+		expect(state?.pendingPriceOperation?.operationId).toBeTruthy();
+		expect(state?.pendingPriceOperation?.attemptId).toBeTruthy();
+
+		const requests = host.http.requests();
+
+		// Stripe Price creation was attempted.
+		expect(
+			requests.filter(
+				(request) =>
+					request.url === "https://api.stripe.com/v1/prices",
+			),
+		).toHaveLength(1);
+
+		// The previous Stripe Price must not be deactivated.
+		expect(
+			requests.some(
+				(request) =>
+					request.url ===
+					"https://api.stripe.com/v1/prices/price_old_123",
+			),
+		).toBe(false);
+	});
+	
+	it("recovers a timed-out Stripe Price operation using the original idempotency key", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 30,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
+
+		const originalOperationId = "original-operation-123";
+		const originalAttemptId = "original-attempt-123";
+		const now = Date.now();
+
+		await host.fixtures.plugin.kv(
+			"state:product:product_test_123",
+			{
+				stripeProductId: "prod_test_123",
+				stripePriceId: "price_old_123",
+				price: 25,
+				currency: "usd",
+				pendingPriceOperation: {
+					operationId: originalOperationId,
+					attemptId: originalAttemptId,
+					stripeProductId: "prod_test_123",
+					currency: "usd",
+					unitAmount: 3000,
+					status: "processing",
+					createdAt: now - 10 * 60 * 1000,
+					processingStartedAt: now - 6 * 60 * 1000,
+				},
+			},
+		);
+
+		// Existing Stripe Product update succeeds.
+		await host.http.respond(
+			"https://api.stripe.com/v1/products/prod_test_123",
+			new Response(
+				JSON.stringify({ id: "prod_test_123" }),
+				{ status: 200 },
+			),
+		);
+
+		// Stripe returns the Price associated with the original operation.
 		await host.http.respond(
 			"https://api.stripe.com/v1/prices",
 			new Response(
+				JSON.stringify({ id: "price_recovered_123" }),
+				{ status: 200 },
+			),
+		);
+
+		// Previous Stripe Price can be deactivated after recovery.
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices/price_old_123",
+			new Response(
 				JSON.stringify({
-					error: {
-						message: "Unable to create Stripe Price",
-					},
+					id: "price_old_123",
+					active: false,
 				}),
-				{
-					status: 400,
-					headers: {
-						"Content-Type": "application/json",
-					},
-				},
+				{ status: 200 },
 			),
 		);
 
@@ -1351,21 +1636,194 @@ describe("product sync", () => {
 
 		const requests = host.http.requests();
 
-		const newPriceRequest = requests.find(
+		const priceRequests = requests.filter(
 			(request) =>
 				request.url === "https://api.stripe.com/v1/prices",
 		);
 
-		expect(newPriceRequest).toBeDefined();
+		expect(priceRequests).toHaveLength(1);
 
-		const deactivateOldPriceRequest = requests.find(
+		expect(
+			priceRequests[0].headers["idempotency-key"],
+		).toBe(
+			`emdash-price-product_test_123-${originalOperationId}`,
+		);
+
+		const state = await host.inspect.kv.get<{
+			stripePriceId?: string;
+			price?: number;
+			currency?: string;
+			pendingPriceOperation?: {
+				operationId: string;
+				attemptId?: string;
+				status?: string;
+			};
+		}>("state:product:product_test_123");
+
+		// Recovery saves the new Stripe Price.
+		expect(state?.stripePriceId).toBe("price_recovered_123");
+		expect(state?.price).toBe(30);
+		expect(state?.currency).toBe("usd");
+
+		// The pending operation is cleared after successful completion.
+		expect(state?.pendingPriceOperation).toBeUndefined();
+
+		// The previous Stripe Price is deactivated after completion.
+		const deactivationRequests = requests.filter(
 			(request) =>
 				request.url ===
 				"https://api.stripe.com/v1/prices/price_old_123",
 		);
 
-		expect(deactivateOldPriceRequest).toBeUndefined();
+		expect(deactivationRequests).toHaveLength(1);
+	});
+	
+	it("reuses the Stripe Price idempotency key when retrying a failed creation", async () => {
+		host = await createPluginRuntimeTestHost();
 
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test T-Shirt",
+				description: "A test product",
+				price: 30,
+				currency: "USD",
+				sku: "SHIRT-001",
+				active: true,
+			},
+		});
+
+		await host.fixtures.plugin.kv(
+			"state:product:product_test_123",
+			{
+				stripeProductId: "prod_test_123",
+				stripePriceId: "price_old_123",
+				price: 25,
+				currency: "usd",
+			},
+		);
+
+		// Both publish attempts update the existing Stripe Product.
+		for (let i = 0; i < 2; i++) {
+			await host.http.respond(
+				"https://api.stripe.com/v1/products/prod_test_123",
+				new Response(
+					JSON.stringify({ id: "prod_test_123" }),
+					{ status: 200 },
+				),
+			);
+		}
+
+		// First price creation fails.
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices",
+			new Response(
+				JSON.stringify({
+					error: { message: "Unable to create Stripe Price" },
+				}),
+				{ status: 400 },
+			),
+		);
+
+		// Retrying the same price creation succeeds.
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices",
+			new Response(
+				JSON.stringify({ id: "price_retry_123" }),
+				{ status: 200 },
+			),
+		);
+
+		// Successful retry should deactivate the previous price.
+		await host.http.respond(
+			"https://api.stripe.com/v1/prices/price_old_123",
+			new Response(
+				JSON.stringify({ id: "price_old_123", active: false }),
+				{ status: 200 },
+			),
+		);
+
+		const publishEvent = {
+			collection: "products",
+			content: {
+				id: "product_test_123",
+				data: {
+					name: "Test T-Shirt",
+					description: "A test product",
+					price: 30,
+					currency: "USD",
+					sku: "SHIRT-001",
+					active: true,
+				},
+			},
+		};
+
+		// First attempt fails.
+		await host.transport.invokeHook("content:afterPublish", publishEvent);
+
+		const firstRequests = host.http.requests();
+
+		const firstPriceRequest = firstRequests.find(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(firstPriceRequest).toBeDefined();
+
+		expect(
+			firstRequests.some(
+				(request) =>
+					request.url ===
+					"https://api.stripe.com/v1/prices/price_old_123",
+			),
+		).toBe(false);
+
+		// Second attempt retries the same product and price.
+		await host.transport.invokeHook("content:afterPublish", publishEvent);
+
+		const requests = host.http.requests();
+
+		const priceRequests = requests.filter(
+			(request) =>
+				request.url === "https://api.stripe.com/v1/prices",
+		);
+
+		expect(priceRequests).toHaveLength(2);
+
+		// Both attempts must use the same idempotency key.
+		const firstKey = priceRequests[0].headers["idempotency-key"];
+		const secondKey = priceRequests[1].headers["idempotency-key"];
+
+		expect(firstKey).toBeTruthy();
+		expect(secondKey).toBe(firstKey);
+
+		// The old price is deactivated only after successful creation.
+		const deactivationRequests = requests.filter(
+			(request) =>
+				request.url ===
+				"https://api.stripe.com/v1/prices/price_old_123",
+		);
+
+		expect(deactivationRequests).toHaveLength(1);
 	});
 
 	it("deactivates Stripe Product when EmDash product is deleted", async () => {
@@ -1421,6 +1879,32 @@ describe("product sync", () => {
 			"stripeSecretKey",
 			"sk_test_example",
 		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "description", label: "Description", type: "string" },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "sku", label: "SKU", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		await host.fixtures.content("products", {
+			id: "product_test_123",
+			status: "published",
+			data: {
+				name: "Test Product",
+				description: "Restored product",
+				sku: "TEST-123",
+				price: 25,
+				currency: "usd",
+				active: true,
+			},
+		});
 
 		await host.fixtures.plugin.kv("state:product:product_test_123", {
 			stripeProductId: "prod_test_123",
@@ -1557,6 +2041,62 @@ describe("product sync", () => {
 
 		const body = new TextDecoder().decode(request?.body);
 		expect(body).toContain("active=false");
+	});
+
+	it("does not sync an outdated publish event over a newer published price", async () => {
+		host = await createPluginRuntimeTestHost();
+
+		await host.fixtures.plugin.setting(
+			"stripeSecretKey",
+			"sk_test_example",
+		);
+
+		await host.fixtures.collection({
+			slug: "products",
+			label: "Products",
+			fields: [
+				{ slug: "name", label: "Name", type: "string", required: true },
+				{ slug: "price", label: "Price", type: "number" },
+				{ slug: "currency", label: "Currency", type: "string" },
+				{ slug: "active", label: "Active", type: "boolean" },
+			],
+		});
+
+		// The currently published product has the newer $30 price.
+		await host.fixtures.content("products", {
+			id: "product_stale_event",
+			status: "published",
+			data: {
+				name: "Test Product",
+				price: 30,
+				currency: "USD",
+				active: true,
+			},
+		});
+
+		await host.fixtures.plugin.kv("state:product:product_stale_event", {
+			stripeProductId: "prod_stale_event",
+			stripePriceId: "price_current_30",
+			price: 30,
+			currency: "usd",
+		});
+
+		// An older event arrives after the $30 price was published.
+		await host.transport.invokeHook("content:afterPublish", {
+			collection: "products",
+			content: {
+				id: "product_stale_event",
+				data: {
+					name: "Test Product",
+					price: 25,
+					currency: "USD",
+					active: true,
+				},
+			},
+		});
+
+		// The older event must not change the Stripe Product or Price.
+		expect(host.http.requests()).toHaveLength(0);
 	});
 });
 
