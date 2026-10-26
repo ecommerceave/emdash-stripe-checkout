@@ -305,3 +305,53 @@ export async function completePriceOperation(
 
     return false;
 }
+
+export async function discardOutdatedPriceOperation(
+    ctx: PluginContext,
+    stateKey: string,
+    operationId: string,
+    attemptId: string | undefined,
+): Promise<boolean> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const versioned =
+            await ctx.kv.getVersioned<PriceOperationState>(stateKey);
+
+        if (!versioned) {
+            return false;
+        }
+
+        const state = versioned.value;
+        const pending = state.pendingPriceOperation;
+
+        // Only the worker that owns this operation may clear it.
+        if (
+            !pending ||
+            pending.operationId !== operationId ||
+            !attemptId ||
+            pending.attemptId !== attemptId ||
+            pending.status !== "processing"
+        ) {
+            return false;
+        }
+
+        const result = await ctx.kv.compareAndSet(
+            stateKey,
+            versioned.revision,
+            {
+                ...state,
+                pendingPriceOperation: undefined,
+            },
+        );
+
+        if (result.applied) {
+            return true;
+        }
+    }
+
+    console.error(
+        "[PLUGIN] Could not discard outdated Stripe Price operation.",
+        { stateKey, operationId },
+    );
+
+    return false;
+}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PluginContext } from "emdash/plugin";
 
 import { createStripePrice } from "../src/products/stripe-api.js";
+import { syncProductAfterPublish } from "../src/products/sync.js";
 import {
     claimPriceOperation,
     markPriceOperationRetryable,
@@ -779,5 +780,170 @@ describe("Stripe Product Price synchronization", () => {
         expect(staleCompleted).toBe(false);
         expect(staleState.stripePriceId).toBe("price_new");
         expect(staleCompareAndSet).not.toHaveBeenCalled();
+    });
+
+    it("does not activate an outdated price when the published product changes during Stripe creation", async () => {
+        let publishedPrice = 25;
+        let releasePriceRequest!: (response: Response) => void;
+        let signalPriceRequest!: () => void;
+
+        const priceRequestStarted = new Promise<void>((resolve) => {
+            signalPriceRequest = resolve;
+        });
+
+        const delayedPriceResponse = new Promise<Response>((resolve) => {
+            releasePriceRequest = resolve;
+        });
+
+        type TestState = {
+            stripeProductId: string;
+            stripePriceId: string;
+            price: number;
+            currency: string;
+            pendingPriceOperation?: {
+                operationId: string;
+                attemptId?: string;
+                stripeProductId: string;
+                currency: string;
+                unitAmount: number;
+                status?: "processing" | "retryable";
+                createdAt?: number;
+                processingStartedAt?: number;
+            };
+        };
+
+        let storedState: TestState = {
+            stripeProductId: "prod_test",
+            stripePriceId: "price_old",
+            price: 20,
+            currency: "usd",
+        };
+
+        let revision = 1;
+
+        const fetch = vi.fn(async (url: string) => {
+            if (url === "https://api.stripe.com/v1/products/prod_test") {
+                return new Response(JSON.stringify({ id: "prod_test" }), {
+                    status: 200,
+                });
+            }
+
+            if (url === "https://api.stripe.com/v1/prices") {
+                const priceRequestCount = fetch.mock.calls.filter(
+                    ([requestUrl]) =>
+                        requestUrl === "https://api.stripe.com/v1/prices",
+                ).length;
+
+                if (priceRequestCount === 1) {
+                    signalPriceRequest();
+                    return delayedPriceResponse;
+                }
+
+                return new Response(
+                    JSON.stringify({ id: "price_current_30" }),
+                    { status: 200 },
+                );
+            }
+
+            if (
+                url === "https://api.stripe.com/v1/prices/price_outdated_25" ||
+                url === "https://api.stripe.com/v1/prices/price_old"
+            ) {
+                return new Response(
+                    JSON.stringify({ id: url.split("/").pop() }),
+                    { status: 200 },
+                );
+            }
+
+            throw new Error(`Unexpected Stripe request: ${url}`);
+        });
+
+        const ctx = {
+            settings: {
+                get: vi.fn(async (key: string) => {
+                    if (key === "stripeSecretKey") return "sk_test_example";
+                    return null;
+                }),
+            },
+            site: { url: "https://example.com" },
+            content: {
+                get: vi.fn(async () => ({
+                    id: "product_test",
+                    status: "published",
+                    data: {
+                        name: "Test Product",
+                        price: publishedPrice,
+                        currency: "USD",
+                        active: true,
+                    },
+                })),
+            },
+            http: { fetch },
+            kv: {
+                get: vi.fn(async () => structuredClone(storedState)),
+                getVersioned: vi.fn(async () => ({
+                    value: structuredClone(storedState),
+                    revision: String(revision),
+                })),
+                compareAndSet: vi.fn(
+                    async (
+                        _key: string,
+                        expectedRevision: string | null,
+                        value: TestState,
+                    ) => {
+                        if (expectedRevision !== String(revision)) {
+                            return { applied: false };
+                        }
+
+                        storedState = structuredClone(value);
+                        revision++;
+
+                        return {
+                            applied: true,
+                            revision: String(revision),
+                        };
+                    },
+                ),
+            },
+        } as unknown as PluginContext;
+
+        const synchronization = syncProductAfterPublish(
+            {
+                collection: "products",
+                content: {
+                    id: "product_test",
+                    data: {
+                        name: "Test Product",
+                        price: 25,
+                        currency: "USD",
+                        active: true,
+                    },
+                },
+            } as Parameters<typeof syncProductAfterPublish>[0],
+            ctx,
+        );
+
+        await priceRequestStarted;
+
+        // The published price changes while Stripe is processing $25.
+        publishedPrice = 30;
+
+        releasePriceRequest(
+            new Response(JSON.stringify({ id: "price_outdated_25" }), {
+                status: 200,
+            }),
+        );
+
+        await synchronization;
+
+        // The outdated $25 Price must not replace the existing Price.
+        expect(storedState.stripePriceId).not.toBe("price_outdated_25");
+
+        // The latest published $30 Price must synchronize automatically.
+        expect(storedState.price).toBe(30);
+        expect(storedState.stripePriceId).toBe("price_current_30");
+
+        // No pending operation should remain after synchronization.
+        expect(storedState.pendingPriceOperation).toBeUndefined();
     });
 });
