@@ -119,19 +119,62 @@ export async function handleAdminInteraction(
     // Orders pagination
     if (
         interaction.type === "block_action" &&
-        interaction.action_id === "stripe-orders-next-page"
+        (interaction.action_id === "stripe-orders-next" ||
+            interaction.action_id === "stripe-orders-previous")
     ) {
         const value = interaction.value;
 
-        const cursor =
-            typeof value === "object" &&
-            value !== null &&
-            "cursor" in value &&
-            typeof value.cursor === "string"
-                ? value.cursor
-                : undefined;
+        if (
+            typeof value !== "object" ||
+            value === null ||
+            !("page" in value) ||
+            typeof value.page !== "number" ||
+            !Number.isSafeInteger(value.page) ||
+            value.page < 1 ||
+            !("previousCursors" in value) ||
+            !Array.isArray(value.previousCursors) ||
+            !value.previousCursors.every(
+                (cursor) =>
+                    cursor === null ||
+                    cursor === undefined ||
+                    typeof cursor === "string",
+            ) ||
+            ("cursor" in value &&
+                value.cursor !== undefined &&
+                typeof value.cursor !== "string")
+        ) {
+            return await buildAdminPage(ctx);
+        }
 
-        return await buildAdminPage(ctx, undefined, cursor);
+        const pagination = {
+            page: value.page,
+            cursor:
+                "cursor" in value &&
+                typeof value.cursor === "string"
+                    ? value.cursor
+                    : undefined,
+            previousCursors: value.previousCursors.map(
+                (cursor) =>
+                    typeof cursor === "string" ? cursor : undefined,
+            ),
+        };
+
+        if (interaction.action_id === "stripe-orders-previous") {
+            const previousCursors = pagination.previousCursors.slice(
+                0,
+                -1,
+            );
+
+            const cursor = pagination.previousCursors.at(-1);
+
+            return await buildAdminPage(ctx, undefined, {
+                page: Math.max(1, pagination.page - 1),
+                cursor,
+                previousCursors,
+            });
+        }
+
+        return await buildAdminPage(ctx, undefined, pagination);
     }
 
     // Default dashboard

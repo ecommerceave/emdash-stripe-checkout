@@ -22,15 +22,24 @@ import {
     type StripeConnectionState,
 } from "../stripe/connection.js";
 
+export type OrdersPaginationState = {
+    page: number;
+    cursor?: string;
+    previousCursors: Array<string | undefined>;
+};
+
 export async function buildAdminPage(
     ctx: PluginContext,
     stripeConnection?: StripeConnectionResult,
-    ordersCursor?: string,
+    pagination: OrdersPaginationState = {
+        page: 1,
+        previousCursors: [],
+    },
 ): Promise<BlockResponse> {
     const schema = await checkProductSchema(ctx);
 
     const { orders, cursor: nextCursor, hasMore } =
-        await listOrders(ctx, ordersCursor);
+        await listOrders(ctx, pagination.cursor);
 
     // Stripe API credentials
     const stripeSecretKey =
@@ -91,31 +100,49 @@ export async function buildAdminPage(
                   ]
                 : []),
 
+
             // Guided Setup
             ...(needsSetup
                 ? [
                       blocks.columns([
-                          [
-                              blocks.header("1. Connect Stripe"),
-                              blocks.section(
-                                  "Add your Stripe Secret Key in plugin settings, then test your connection.",
-                              ),
-                          ],
-                          [
-                              blocks.header("2. Enable Webhooks"),
-                              blocks.section(
-                                  "Create a webhook endpoint in Stripe using the URL below, then add its signing secret to plugin settings.",
-                              ),
-                          ],
-                          [
-                              blocks.header("3. Configure Products"),
-                              blocks.section(
-                                  "Configure your product collection and add products to begin accepting payments.",
-                              ),
-                          ],
+                          ...(!stripeSecretKey || !connection?.ok
+                              ? [
+                                    [
+                                        blocks.header("Connect Stripe"),
+                                        blocks.section(
+                                            !stripeSecretKey
+                                                ? "Add your Stripe Secret Key in plugin settings, then test your connection."
+                                                : "Run a Stripe connection test to verify your credentials.",
+                                        ),
+                                    ],
+                                ]
+                              : []),
+
+                          ...(!stripeWebhookSecret
+                              ? [
+                                    [
+                                        blocks.header("Enable Webhooks"),
+                                        blocks.section(
+                                            "Create a webhook endpoint in Stripe using the URL below, then add its signing secret to plugin settings.",
+                                        ),
+                                    ],
+                                ]
+                              : []),
+
+                          ...(!schema.ok
+                              ? [
+                                    [
+                                        blocks.header("Configure Products"),
+                                        blocks.section(
+                                            "Configure your Product Content Type to enable product synchronization with Stripe.",
+                                        ),
+                                    ],
+                                ]
+                              : []),
                       ]),
                   ]
                 : []),
+
 
             // Webhook Endpoint URL
             ...(needsSetup
@@ -183,23 +210,57 @@ export async function buildAdminPage(
                         : "Product Content Type requires attention",
                 },
                 {
-                    label: "Recent Orders",
+                    label: "Orders on This Page",
                     value: orders.length,
-                    description: "Orders loaded on this page",
+                    description: `Page ${pagination.page} of your orders`,
                 },
             ]),
+
+
 
             // Product Schema Guidance
             ...(!schema.ok
                 ? [
                       blocks.section(
-                          getProductSchemaGuidance(
-                              schema,
-                              await getProductContentTypeSlug(ctx),
-                          ),
+                          "Your Product Content Type needs to be configured before products can synchronize with Stripe.",
                       ),
+                      blocks.accordion({
+                          label: "Product Content Type Setup Instructions",
+                          defaultOpen: false,
+                          blocks: [
+                              blocks.section(
+                                  `Create or configure a Content Type with the slug "${await getProductContentTypeSlug(ctx)}".`,
+                              ),
+                              blocks.table({
+                                    blockId: "stripe-product-setup-fields",
+                                    pageActionId: "stripe-product-setup-page",
+                                  columns: [
+                                      { key: "name", label: "Field", format: "text" },
+                                      { key: "slug", label: "Slug", format: "code" },
+                                      { key: "type", label: "Type", format: "text" },
+                                      { key: "required", label: "Required", format: "text" },
+                                  ],
+                                  rows: [
+                                      { name: "Name", slug: "name", type: "String", required: "Yes" },
+                                      { name: "Description", slug: "description", type: "Text", required: "No" },
+                                      { name: "Image", slug: "image", type: "Image", required: "No" },
+                                      { name: "Price", slug: "price", type: "Number", required: "Yes" },
+                                      { name: "Currency", slug: "currency", type: "Select", required: "Yes" },
+                                      { name: "SKU", slug: "sku", type: "String", required: "No" },
+                                      { name: "Active", slug: "active", type: "Boolean", required: "No" },
+                                  ],
+                              }),
+                              blocks.section(
+                                  "Currency field: Add USD, CAD, EUR, and GBP as Select options. Set USD as the default.",
+                              ),
+                              blocks.section(
+                                  "Save the Content Type, then return to Stripe Checkout. The plugin will automatically detect the configuration.",
+                              ),
+                          ],
+                      }),
                   ]
                 : []),
+
 
             // Technical Connection Details
             blocks.accordion({
@@ -267,18 +328,60 @@ export async function buildAdminPage(
 
             blocks.header("Orders"),
 
-            blocks.section(
-                orders.length === 0
-                    ? "No orders have been placed yet."
-                    : `Showing ${orders.length} recent orders.`,
-            ),
+            ...(orders.length > 0
+                ? [
+                    blocks.section(
+                        `Page ${pagination.page} — Showing ${orders.length} orders.`,
+                    ),
+                ]
+                : []),
 
             // Orders Table
             buildOrdersTable({
                 orders,
-                nextCursor,
-                hasMore,
+                nextCursor: undefined,
+                hasMore: false,
             }),
+
+            // Orders Pagination
+            ...(pagination.page > 1 || hasMore
+                ? [
+                    blocks.actions([
+                        ...(pagination.page > 1
+                            ? [
+                                    elements.button(
+                                        "stripe-orders-previous",
+                                        "Previous",
+                                        {
+                                            style: "secondary",
+                                            value: pagination,
+                                        },
+                                    ),
+                                ]
+                            : []),
+
+                        ...(hasMore && nextCursor
+                            ? [
+                                    elements.button(
+                                        "stripe-orders-next",
+                                        "Next",
+                                        {
+                                            style: "secondary",
+                                            value: {
+                                                page: pagination.page + 1,
+                                                cursor: nextCursor,
+                                                previousCursors: [
+                                                    ...pagination.previousCursors,
+                                                    pagination.cursor,
+                                                ],
+                                            },
+                                        },
+                                    ),
+                                ]
+                            : []),
+                    ]),
+                ]
+            : []),
         ],
     };
 }

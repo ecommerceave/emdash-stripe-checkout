@@ -2279,31 +2279,74 @@ describe("checkProductSchema route", () => {
 
 describe("admin route", () => {
 	it("shows Products collection setup guidance on a fresh install", async () => {
-		host = await createPluginRuntimeTestHost();
+			host = await createPluginRuntimeTestHost();
 
-		const result = await host.transport.invokeRoute(
-			"admin",
-		);
+			const result = await host.transport.invokeRoute(
+					"admin",
+			);
 
-		expect(result).toMatchObject({
-			blocks: expect.any(Array),
-		});
+			expect(result).toMatchObject({
+					blocks: expect.any(Array),
+			});
 
-		expect(JSON.stringify(result)).toContain(
-			'Stripe Checkout requires a Product Content Type with the slug \\"products\\".'
-		);
+			const output = JSON.stringify(result);
 
-		expect(JSON.stringify(result)).toContain(
-			"Name — name — String — Required",
-		);
+			// Fresh installs should display onboarding guidance.
+			expect(output).toContain("Stripe Setup");
+			expect(output).toContain("Connect Stripe");
+			expect(output).toContain("Enable Webhooks");
+			expect(output).toContain("Configure Products");
 
-		expect(JSON.stringify(result)).toContain(
-			"Price — price — Number — Required",
-		);
+			// Product setup should use the new accordion.
+			expect(output).toContain(
+					"Product Content Type Setup Instructions",
+			);
 
-		expect(JSON.stringify(result)).toContain(
-			"Currency — currency — Select — Required",
-		);
+			expect(output).toContain(
+					'Create or configure a Content Type with the slug \\"products\\".',
+			);
+
+			// Verify the structured field table.
+			const accordion = (result as any).blocks.find(
+					(block: any) =>
+							block.type === "accordion" &&
+							block.label === "Product Content Type Setup Instructions",
+			);
+
+			expect(accordion).toBeDefined();
+
+			const fieldTable = accordion.blocks.find(
+					(block: any) =>
+							block.type === "table" &&
+							block.block_id === "stripe-product-setup-fields",
+			);
+
+			expect(fieldTable).toBeDefined();
+
+			expect(fieldTable.rows).toEqual(
+					expect.arrayContaining([
+							{
+									name: "Name",
+									slug: "name",
+									type: "String",
+									required: "Yes",
+							},
+							{
+									name: "Price",
+									slug: "price",
+									type: "Number",
+									required: "Yes",
+							},
+							{
+									name: "Currency",
+									slug: "currency",
+									type: "Select",
+									required: "Yes",
+							},
+					]),
+			);
+
+			expect(output).toContain("USD, CAD, EUR, and GBP");
 	});
 
 	it("shows that Products are ready when the schema is valid", async () => {
@@ -2393,19 +2436,26 @@ describe("admin route", () => {
 	});
 
 	it("returns to the Orders dashboard", async () => {
-		host = await createPluginRuntimeTestHost();
+			host = await createPluginRuntimeTestHost();
 
-		const result = await host.transport.invokeRoute("admin", {
-			type: "block_action",
-			action_id: "stripe-orders-back",
-		});
+			const result = await host.transport.invokeRoute("admin", {
+					type: "block_action",
+					action_id: "stripe-orders-back",
+			});
 
-		const output = JSON.stringify(result);
+			const output = JSON.stringify(result);
 
-		expect(output).toContain("Orders");
-		expect(output).toContain(
-			'Stripe Checkout requires a Product Content Type with the slug \\"products\\".'
-		);
+			// Verify the Orders dashboard is displayed.
+			expect(output).toContain("Orders");
+
+			// Verify the updated product setup guidance remains available.
+			expect(output).toContain(
+					"Product Content Type Setup Instructions",
+			);
+
+			expect(output).toContain(
+					'Create or configure a Content Type with the slug \\"products\\".',
+			);
 	});
 });
 
