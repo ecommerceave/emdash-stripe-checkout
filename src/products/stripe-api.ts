@@ -194,32 +194,50 @@ export async function deactivateStripePrice(
     ctx: PluginContext,
     stripePriceId: string,
     stripeSecretKey: string,
-): Promise<void> {
+): Promise<boolean> {
     if (!ctx.http) {
         console.error("[PLUGIN] Network access is not available.");
-        return;
+        return false;
     }
 
     const body = new URLSearchParams();
     body.set("active", "false");
 
-    const response = await ctx.http.fetch(
-        `https://api.stripe.com/v1/prices/${stripePriceId}`,
-        {
-            method: "POST",
-            headers: stripeHeaders(stripeSecretKey),
-            body: body.toString(),
-        },
-    );
+    try {
+        const response = await ctx.http.fetch(
+            `https://api.stripe.com/v1/prices/${stripePriceId}`,
+            {
+                method: "POST",
+                headers: stripeHeaders(stripeSecretKey),
+                body: body.toString(),
+            },
+        );
 
-    if (!response.ok) {
-        console.error("[PLUGIN] Old Stripe Price could not be deactivated", {
-            stripePriceId,
-            status: response.status,
-        });
-    } else {
+        if (!response.ok) {
+            console.error(
+                "[PLUGIN] Old Stripe Price could not be deactivated",
+                {
+                    stripePriceId,
+                    status: response.status,
+                },
+            );
+            return false;
+        }
+
         console.log("[PLUGIN] Old Stripe Price deactivated", {
             stripePriceId,
         });
+
+        return true;
+    } catch (error) {
+        console.error(
+            "[PLUGIN] Stripe Price deactivation encountered an exception.",
+            {
+                stripePriceId,
+                error,
+            },
+        );
+
+        return false;
     }
 }

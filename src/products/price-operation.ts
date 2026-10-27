@@ -21,6 +21,17 @@ export type PriceOperationState = {
     price?: number;
     currency?: string;
     pendingPriceOperation?: PendingPriceOperation;
+    pendingPriceDeactivations?: string[];
+
+    // Tracks which recovery attempt currently owns
+    // each pending Stripe Price deactivation.
+    pendingDeactivationClaims?: Record<
+        string,
+        {
+            attemptId: string;
+            claimedAt: number;
+        }
+    >;
 };
 
 export type PriceOperationClaim = {
@@ -280,7 +291,19 @@ export async function completePriceOperation(
             return false;
         }
 
-        // Atomically save the Stripe Price and clear the operation.
+        // Record the previous Price for deactivation in the same
+        // atomic update that activates the replacement Price.
+        // This preserves cleanup work even if Stripe is unavailable.
+        const pendingPriceDeactivations = [
+            ...new Set([
+                ...(state.pendingPriceDeactivations ?? []),
+                ...(state.stripePriceId &&
+                state.stripePriceId !== stripePriceId
+                    ? [state.stripePriceId]
+                    : []),
+            ]),
+        ];
+
         const result = await ctx.kv.compareAndSet(
             stateKey,
             versioned.revision,
@@ -290,6 +313,7 @@ export async function completePriceOperation(
                 price,
                 currency,
                 pendingPriceOperation: undefined,
+                pendingPriceDeactivations,
             },
         );
 
@@ -311,6 +335,7 @@ export async function discardOutdatedPriceOperation(
     stateKey: string,
     operationId: string,
     attemptId: string | undefined,
+    stripePriceId: string,
 ): Promise<boolean> {
     for (let attempt = 0; attempt < 5; attempt++) {
         const versioned =
@@ -334,12 +359,20 @@ export async function discardOutdatedPriceOperation(
             return false;
         }
 
+        const pendingPriceDeactivations = [
+            ...new Set([
+                ...(state.pendingPriceDeactivations ?? []),
+                stripePriceId,
+            ]),
+        ];
+
         const result = await ctx.kv.compareAndSet(
             stateKey,
             versioned.revision,
             {
                 ...state,
                 pendingPriceOperation: undefined,
+                pendingPriceDeactivations,
             },
         );
 
@@ -351,6 +384,269 @@ export async function discardOutdatedPriceOperation(
     console.error(
         "[PLUGIN] Could not discard outdated Stripe Price operation.",
         { stateKey, operationId },
+    );
+
+    return false;
+}
+
+export async function clearPendingPriceDeactivation(
+    ctx: PluginContext,
+    stateKey: string,
+    stripePriceId: string,
+    attemptId?: string,
+): Promise<boolean> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const versioned =
+            await ctx.kv.getVersioned<PriceOperationState>(stateKey);
+
+        if (!versioned) {
+            return false;
+        }
+
+        const state = versioned.value;
+        const pending = state.pendingPriceDeactivations ?? [];
+        const claim = state.pendingDeactivationClaims?.[stripePriceId];
+
+        // A claimed Price can only be cleared by its owner.
+        if (claim && claim.attemptId !== attemptId) {
+            return false;
+        }
+
+        // A recovery attempt must still own its claim.
+        if (attemptId && (!claim || claim.attemptId !== attemptId)) {
+            return false;
+        }
+
+        if (!pending.includes(stripePriceId)) {
+            return true;
+        }
+
+        const claims = {
+            ...(state.pendingDeactivationClaims ?? {}),
+        };
+
+        delete claims[stripePriceId];
+
+        const result = await ctx.kv.compareAndSet(
+            stateKey,
+            versioned.revision,
+            {
+                ...state,
+                pendingPriceDeactivations: pending.filter(
+                    (id) => id !== stripePriceId,
+                ),
+                pendingDeactivationClaims: claims,
+            },
+        );
+
+        if (result.applied) {
+            return true;
+        }
+    }
+
+    console.error(
+        "[PLUGIN] Could not clear pending Stripe Price deactivation.",
+        { stateKey, stripePriceId },
+    );
+
+    return false;
+}
+
+export async function recoverPendingPriceDeactivations(
+    ctx: PluginContext,
+    stateKey: string,
+    stripeSecretKey: string,
+    deactivatePrice: (
+        ctx: PluginContext,
+        stripePriceId: string,
+        stripeSecretKey: string,
+    ) => Promise<boolean>,
+): Promise<void> {
+    const versioned =
+        await ctx.kv.getVersioned<PriceOperationState>(stateKey);
+
+    if (!versioned) {
+        return;
+    }
+
+    const pending = versioned.value.pendingPriceDeactivations ?? [];
+
+    for (const stripePriceId of pending) {
+        // Atomically claim ownership before contacting Stripe.
+        // Only one recovery attempt can own a Price at a time.
+        const attemptId = await claimPendingPriceDeactivation(
+            ctx,
+            stateKey,
+            stripePriceId,
+        );
+
+        if (!attemptId) {
+            continue;
+        }
+
+        try {
+            const deactivated = await deactivatePrice(
+                ctx,
+                stripePriceId,
+                stripeSecretKey,
+            );
+
+            if (deactivated) {
+                const cleared = await clearPendingPriceDeactivation(
+                    ctx,
+                    stateKey,
+                    stripePriceId,
+                    attemptId,
+                );
+
+                if (!cleared) {
+                    console.error(
+                        "[PLUGIN] Recovered Stripe Price deactivation, but could not clear its pending record.",
+                        { stateKey, stripePriceId },
+                    );
+                }
+            } else {
+                console.warn(
+                    "[PLUGIN] Stripe Price deactivation recovery will retry later.",
+                    { stateKey, stripePriceId },
+                );
+
+                await releasePendingPriceDeactivationClaim(
+                    ctx,
+                    stateKey,
+                    stripePriceId,
+                    attemptId,
+                );
+            }
+        } catch (error) {
+            console.error(
+                "[PLUGIN] Stripe Price deactivation recovery encountered an exception.",
+                { stateKey, stripePriceId, error },
+            );
+
+            await releasePendingPriceDeactivationClaim(
+                ctx,
+                stateKey,
+                stripePriceId,
+                attemptId,
+            );
+        }
+    }
+}
+
+export async function claimPendingPriceDeactivation(
+    ctx: PluginContext,
+    stateKey: string,
+    stripePriceId: string,
+): Promise<string | null> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const versioned =
+            await ctx.kv.getVersioned<PriceOperationState>(stateKey);
+
+        if (!versioned) {
+            return null;
+        }
+
+        const state = versioned.value;
+
+        // Never claim the currently active Stripe Price.
+        if (state.stripePriceId === stripePriceId) {
+            return null;
+        }
+
+        if (
+            !state.pendingPriceDeactivations?.includes(stripePriceId)
+        ) {
+            return null;
+        }
+
+        const existingClaim =
+            state.pendingDeactivationClaims?.[stripePriceId];
+
+        // Prevent another recovery attempt from claiming this Price.
+        // A stale claim can be reclaimed after five minutes.
+        if (
+            existingClaim &&
+            Date.now() - existingClaim.claimedAt < 5 * 60 * 1000
+        ) {
+            return null;
+        }
+
+        const attemptId = crypto.randomUUID();
+
+        const result = await ctx.kv.compareAndSet(
+            stateKey,
+            versioned.revision,
+            {
+                ...state,
+                pendingDeactivationClaims: {
+                    ...(state.pendingDeactivationClaims ?? {}),
+                    [stripePriceId]: {
+                        attemptId,
+                        claimedAt: Date.now(),
+                    },
+                },
+            },
+        );
+
+        if (result.applied) {
+            return attemptId;
+        }
+    }
+
+    console.error(
+        "[PLUGIN] Could not claim pending Stripe Price deactivation.",
+        { stateKey, stripePriceId },
+    );
+
+    return null;
+}
+
+export async function releasePendingPriceDeactivationClaim(
+    ctx: PluginContext,
+    stateKey: string,
+    stripePriceId: string,
+    attemptId: string,
+): Promise<boolean> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const versioned =
+            await ctx.kv.getVersioned<PriceOperationState>(stateKey);
+
+        if (!versioned) {
+            return false;
+        }
+
+        const state = versioned.value;
+        const claim = state.pendingDeactivationClaims?.[stripePriceId];
+
+        // Only the attempt that owns the claim can release it.
+        if (!claim || claim.attemptId !== attemptId) {
+            return false;
+        }
+
+        const claims = {
+            ...(state.pendingDeactivationClaims ?? {}),
+        };
+
+        delete claims[stripePriceId];
+
+        const result = await ctx.kv.compareAndSet(
+            stateKey,
+            versioned.revision,
+            {
+                ...state,
+                pendingDeactivationClaims: claims,
+            },
+        );
+
+        if (result.applied) {
+            return true;
+        }
+    }
+
+    console.error(
+        "[PLUGIN] Could not release Stripe Price deactivation claim.",
+        { stateKey, stripePriceId },
     );
 
     return false;

@@ -15,6 +15,10 @@ import {
     markPriceOperationRetryable,
     completePriceOperation,
     discardOutdatedPriceOperation,
+    clearPendingPriceDeactivation,
+    recoverPendingPriceDeactivations,
+    claimPendingPriceDeactivation,
+    releasePendingPriceDeactivationClaim,
 } from "./price-operation.js";
 
 export type StripeProductState = {
@@ -191,6 +195,15 @@ async function syncPublishedProduct(
         return;
     }
 
+    // Retry previously failed Stripe Price deactivations
+    // during subsequent product synchronizations.
+    await recoverPendingPriceDeactivations(
+        ctx,
+        stateKey,
+        stripeSecretKey,
+        deactivateStripePrice,
+    );
+
     const stripeProductInput = {
         contentId,
         name,
@@ -339,6 +352,7 @@ async function syncPublishedProduct(
                     stateKey,
                     operationId,
                     claim.attemptId,
+                    stripePriceId,
                 );
 
             if (!discarded) {
@@ -349,11 +363,63 @@ async function syncPublishedProduct(
                 return;
             }
 
-            await deactivateStripePrice(
-                ctx,
-                stripePriceId,
-                stripeSecretKey,
-            );
+            const deactivationAttemptId =
+                await claimPendingPriceDeactivation(
+                    ctx,
+                    stateKey,
+                    stripePriceId,
+                );
+
+            if (deactivationAttemptId) {
+                try {
+                    const deactivated = await deactivateStripePrice(
+                        ctx,
+                        stripePriceId,
+                        stripeSecretKey,
+                    );
+
+                    if (deactivated) {
+                        const cleared =
+                            await clearPendingPriceDeactivation(
+                                ctx,
+                                stateKey,
+                                stripePriceId,
+                                deactivationAttemptId,
+                            );
+
+                        if (!cleared) {
+                            console.error(
+                                "[PLUGIN] Stripe Price was deactivated, but its cleanup record could not be cleared.",
+                                { contentId, stripePriceId },
+                            );
+                        }
+                    } else {
+                        console.error(
+                            "[PLUGIN] Outdated Stripe Price remains pending deactivation.",
+                            { contentId, stripePriceId },
+                        );
+
+                        await releasePendingPriceDeactivationClaim(
+                            ctx,
+                            stateKey,
+                            stripePriceId,
+                            deactivationAttemptId,
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "[PLUGIN] Outdated Stripe Price deactivation encountered an exception.",
+                        { contentId, stripePriceId, error },
+                    );
+
+                    await releasePendingPriceDeactivationClaim(
+                        ctx,
+                        stateKey,
+                        stripePriceId,
+                        deactivationAttemptId,
+                    );
+                }
+            }
 
             // Retry using the latest published product, up to
             // the configured maximum number of attempts.
@@ -399,11 +465,65 @@ async function syncPublishedProduct(
         }
 
         if (currentState.stripePriceId && priceChanged) {
-            await deactivateStripePrice(
-                ctx,
-                currentState.stripePriceId,
-                stripeSecretKey,
-            );
+            const oldStripePriceId = currentState.stripePriceId;
+
+            const deactivationAttemptId =
+                await claimPendingPriceDeactivation(
+                    ctx,
+                    stateKey,
+                    oldStripePriceId,
+                );
+
+            if (deactivationAttemptId) {
+                try {
+                    const deactivated = await deactivateStripePrice(
+                        ctx,
+                        oldStripePriceId,
+                        stripeSecretKey,
+                    );
+
+                    if (deactivated) {
+                        const cleared =
+                            await clearPendingPriceDeactivation(
+                                ctx,
+                                stateKey,
+                                oldStripePriceId,
+                                deactivationAttemptId,
+                            );
+
+                        if (!cleared) {
+                            console.error(
+                                "[PLUGIN] Previous Stripe Price was deactivated, but its cleanup record could not be cleared.",
+                                { contentId, stripePriceId: oldStripePriceId },
+                            );
+                        }
+                    } else {
+                        console.error(
+                            "[PLUGIN] Previous Stripe Price remains pending deactivation.",
+                            { contentId, stripePriceId: oldStripePriceId },
+                        );
+
+                        await releasePendingPriceDeactivationClaim(
+                            ctx,
+                            stateKey,
+                            oldStripePriceId,
+                            deactivationAttemptId,
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "[PLUGIN] Previous Stripe Price deactivation encountered an exception.",
+                        { contentId, stripePriceId: oldStripePriceId, error },
+                    );
+
+                    await releasePendingPriceDeactivationClaim(
+                        ctx,
+                        stateKey,
+                        oldStripePriceId,
+                        deactivationAttemptId,
+                    );
+                }
+            }
         }
     }
 }
