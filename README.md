@@ -490,12 +490,24 @@ Then import `emdashStripeCheckout` from `emdash-stripe-checkout` and pass it int
 
 `pnpm run test` builds the plugin and runs its tests through Worker Loader using EmDash's production sandbox wrapper and host bridge.
 
-## Publish
+## Publishing and Releases
+
+Production releases are published through GitHub Actions, which runs automated validation, builds the plugin, generates signed build provenance, and submits the release to the EmDash Plugin Registry.
+
+The release workflow is located at `.github/workflows/emdash-release.yml`.
+
+For complete release instructions, including version management, pre-release validation, GitHub Actions publication, and post-release verification, see the [Release Guide](docs/releasing.md).
+
+### Manual Publishing
+
+Manual publishing is available as a fallback:
 
 ```sh
 pnpm run login -- ecommerceave.com
 pnpm run publish
 ```
+
+Manual publishing bypasses the standard GitHub Actions build provenance workflow and is not recommended for normal production releases.
 
 To publish from GitHub Actions, run `pnpm run release:setup`. The command creates one shared workflow at the Git repository root.
 
