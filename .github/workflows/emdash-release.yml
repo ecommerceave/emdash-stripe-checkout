@@ -50,6 +50,15 @@ jobs:
       - name: "Install dependencies"
         run: pnpm install --frozen-lockfile
 
+      - name: "Validate TypeScript"
+        run: pnpm run typecheck
+
+      - name: "Run automated tests"
+        run: pnpm test
+
+      - name: "Build plugin and storefront"
+        run: pnpm build
+
       - name: "Prepare plugin release"
         id: prepare
         shell: bash
