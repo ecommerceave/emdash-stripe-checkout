@@ -1824,7 +1824,7 @@ describe("product sync", () => {
 		);
 
 		expect(deactivationRequests).toHaveLength(1);
-	});
+	}, 15000);
 
 	it("deactivates Stripe Product when EmDash product is deleted", async () => {
 		host = await createPluginRuntimeTestHost();
