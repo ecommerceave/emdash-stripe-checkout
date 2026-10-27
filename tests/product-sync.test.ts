@@ -19,6 +19,108 @@ import {
 } from "../src/products/price-operation.js";
 
 describe("Stripe Product Price synchronization", () => {
+    it.each([
+        ["unsupported JPY", "JPY"],
+        ["empty currency", ""],
+        ["missing currency", undefined],
+        ["null currency", null],
+    ])(
+        "rejects %s before contacting Stripe",
+        async (_scenario, currency) => {
+            const fetch = vi.fn();
+
+            const productData = {
+                name: "Test Product",
+                price: 25,
+                currency,
+                active: true,
+            };
+
+            const ctx = {
+                settings: {
+                    get: vi.fn(async (key: string) => {
+                        if (key === "productContentTypeSlug") {
+                            return "products";
+                        }
+
+                        return null;
+                    }),
+                },
+                content: {
+                    get: vi.fn(async () => ({
+                        id: "product_invalid_currency",
+                        status: "published",
+                        data: productData,
+                    })),
+                },
+                http: { fetch },
+                kv: {
+                    get: vi.fn(),
+                },
+            } as unknown as PluginContext;
+
+            await syncProductAfterPublish(
+                {
+                    collection: "products",
+                    content: {
+                        id: "product_invalid_currency",
+                        data: productData,
+                    },
+                } as Parameters<typeof syncProductAfterPublish>[0],
+                ctx,
+            );
+
+            expect(fetch).not.toHaveBeenCalled();
+            expect(ctx.kv.get).not.toHaveBeenCalled();
+        },
+    );
+    
+    it.each([
+        ["usd", 2500],
+        ["cad", 3500],
+        ["eur", 4500],
+        ["gbp", 5500],
+    ])(
+        "creates a Stripe Price using %s",
+        async (currency, unitAmount) => {
+            const fetch = vi.fn().mockResolvedValue(
+                new Response(
+                    JSON.stringify({ id: `price_test_${currency}` }),
+                    { status: 200 },
+                ),
+            );
+
+            const ctx = {
+                http: { fetch },
+            } as unknown as PluginContext;
+
+            const priceId = await createStripePrice(ctx, {
+                contentId: `product_${currency}`,
+                stripeProductId: "prod_test",
+                currency,
+                unitAmount,
+                stripeSecretKey: "sk_test_example",
+                operationId: `currency-test-${currency}`,
+            });
+
+            expect(priceId).toBe(`price_test_${currency}`);
+
+            expect(fetch).toHaveBeenCalledTimes(1);
+
+            const [url, options] = fetch.mock.calls[0];
+
+            expect(url).toBe("https://api.stripe.com/v1/prices");
+
+            const body = new URLSearchParams(options.body);
+
+            expect(body.get("product")).toBe("prod_test");
+            expect(body.get("currency")).toBe(currency);
+            expect(body.get("unit_amount")).toBe(
+                String(unitAmount),
+            );
+        },
+    );
+
     it("uses a unique idempotency key for separate price creation attempts", async () => {
         const fetch = vi.fn()
             .mockResolvedValueOnce(
@@ -795,19 +897,33 @@ describe("Stripe Product Price synchronization", () => {
             scenario: "successful deactivation",
             deactivationStatus: 200,
             expectedPendingDeactivations: [],
+            latestPrice: 30,
+            latestCurrency: "USD",
         },
         {
             scenario: "failed deactivation",
             deactivationStatus: 500,
             expectedPendingDeactivations: ["price_outdated_25"],
+            latestPrice: 30,
+            latestCurrency: "USD",
+        },
+        {
+            scenario: "USD to CAD currency change",
+            deactivationStatus: 200,
+            expectedPendingDeactivations: [],
+            latestPrice: 25,
+            latestCurrency: "CAD",
         },
     ])(
         "handles an outdated price with $scenario during Stripe creation",
         async ({
             deactivationStatus,
             expectedPendingDeactivations,
+            latestPrice,
+            latestCurrency,
         }) => {
             let publishedPrice = 25;
+            let publishedCurrency = "USD";
             let releasePriceRequest!: (response: Response) => void;
             let signalPriceRequest!: () => void;
 
@@ -921,7 +1037,7 @@ describe("Stripe Product Price synchronization", () => {
                         data: {
                             name: "Test Product",
                             price: publishedPrice,
-                            currency: "USD",
+                            currency: publishedCurrency,
                             active: true,
                         },
                     })),
@@ -978,8 +1094,10 @@ describe("Stripe Product Price synchronization", () => {
 
             await priceRequestStarted;
 
-            // The published price changes while Stripe is processing $25.
-            publishedPrice = 30;
+            // The published price or currency changes while Stripe
+            // is processing the original $25 USD Price.
+            publishedPrice = latestPrice;
+            publishedCurrency = latestCurrency;
 
             releasePriceRequest(
                 new Response(
@@ -997,8 +1115,11 @@ describe("Stripe Product Price synchronization", () => {
                 "price_outdated_25",
             );
 
-            // The latest published $30 Price must synchronize.
-            expect(storedState.price).toBe(30);
+            // The latest published price and currency must synchronize.
+            expect(storedState.price).toBe(latestPrice);
+            expect(storedState.currency).toBe(
+                latestCurrency.toLowerCase(),
+            );
             expect(storedState.stripePriceId).toBe(
                 "price_current_30",
             );

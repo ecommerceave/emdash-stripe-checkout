@@ -7,6 +7,7 @@ import {
 } from "@emdash-cms/blocks/server";
 
 import { getOrder } from "../orders/storage.js";
+import { formatCurrency } from "./format-currency.js";
 
 export async function buildOrderDetailsPage(
     ctx: PluginContext,
@@ -32,10 +33,10 @@ export async function buildOrderDetailsPage(
     }
 
     // Format the order amount
-    const formattedAmount =
-        order.amountTotal != null && order.currency
-            ? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
-            : "Unavailable";
+    const formattedAmount = formatCurrency(
+        order.amountTotal,
+        order.currency,
+    );
 
     // Format dates for readability
     const formatDate = (
@@ -148,18 +149,19 @@ export async function buildOrderDetailsPage(
                         },
                         {
                             label: "Refunded Amount",
-                            value: `${(
-                                (order.refundedAmount ??
+                            value: formatCurrency(
+                                order.refundedAmount ??
                                     (order.paymentStatus === "refunded"
                                         ? order.amountTotal ?? 0
-                                        : 0)) / 100
-                            ).toFixed(2)} ${(order.currency ?? "USD").toUpperCase()}`,
+                                        : 0),
+                                order.currency,
+                            ),
                         },
                         {
                             label: "Remaining Balance",
                             value:
                                 order.amountTotal != null
-                                    ? `${(
+                                    ? formatCurrency(
                                         Math.max(
                                             0,
                                             order.amountTotal -
@@ -167,8 +169,9 @@ export async function buildOrderDetailsPage(
                                                     (order.paymentStatus === "refunded"
                                                         ? order.amountTotal
                                                         : 0)),
-                                        ) / 100
-                                    ).toFixed(2)} ${(order.currency ?? "USD").toUpperCase()}`
+                                        ),
+                                        order.currency,
+                                    )
                                     : "Unavailable",
                         },
                         {
@@ -191,7 +194,10 @@ export async function buildOrderDetailsPage(
                                     },
                                     {
                                         label: "Amount",
-                                        value: `${(refund.amount / 100).toFixed(2)} ${refund.currency.toUpperCase()}`,
+                                        value: formatCurrency(
+                                            refund.amount,
+                                            refund.currency,
+                                        ),
                                     },
                                     {
                                         label: "Status",

@@ -1,6 +1,7 @@
 
 import { blocks, elements } from "@emdash-cms/blocks/server";
 import type { Order } from "../orders/types.js";
+import { formatCurrency } from "./format-currency.js";
 
 type OrdersTableInput = {
     orders: Order[];
@@ -69,10 +70,10 @@ export function buildOrdersTable({
 
             quantity: order.quantity,
 
-            amount:
-                order.amountTotal != null && order.currency
-                    ? `${(order.amountTotal / 100).toFixed(2)} ${order.currency.toUpperCase()}`
-                    : "Unavailable",
+            amount: formatCurrency(
+                order.amountTotal,
+                order.currency,
+            ),
 
             status: order.paymentStatus,
 

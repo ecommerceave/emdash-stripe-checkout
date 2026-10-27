@@ -2,6 +2,7 @@
 import type { SandboxedPlugin } from "emdash/plugin";
 
 import { getProductContentTypeSlug } from "./content-type.js";
+import { normalizeCurrency } from "./currency.js";
 
 import {
     createStripeProduct,
@@ -83,17 +84,12 @@ async function syncPublishedProduct(
     const publishedPrice = product.price;
     const eventPrice = eventProduct.price;
 
-    const publishedCurrency =
-        typeof product.currency === "string"
-            ? product.currency.trim().toLowerCase()
-            : "usd";
-
-    const eventCurrency =
-        typeof eventProduct.currency === "string"
-            ? eventProduct.currency.trim().toLowerCase()
-            : "usd";
+    const publishedCurrency = normalizeCurrency(product.currency);
+    const eventCurrency = normalizeCurrency(eventProduct.currency);
 
     if (
+        !publishedCurrency ||
+        !eventCurrency ||
         publishedPrice !== eventPrice ||
         publishedCurrency !== eventCurrency
     ) {
@@ -127,10 +123,7 @@ async function syncPublishedProduct(
             ? product.price
             : NaN;
 
-    const currency =
-        typeof product.currency === "string"
-            ? product.currency.trim().toLowerCase()
-            : "usd";
+    const currency = normalizeCurrency(product.currency);
 
     const active =
         product.active === true || product.active === 1;
@@ -330,10 +323,9 @@ async function syncPublishedProduct(
 
         const latestPrice = latestData?.price;
 
-        const latestCurrency =
-            typeof latestData?.currency === "string"
-                ? latestData.currency.trim().toLowerCase()
-                : "usd";
+        const latestCurrency = normalizeCurrency(
+            latestData?.currency,
+        );
 
         const priceIsOutdated =
             latestProduct?.status !== "published" ||
